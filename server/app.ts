@@ -44,6 +44,7 @@ app.use(
 )
 
 app.get('/health', (c) => c.json({ status: 'ok', service: 'licitaciones-api' }))
+app.get('/api/health', (c) => c.json({ status: 'ok', service: 'licitaciones-api' }))
 
 app.route('/api/convocatorias-drive', convocatoriasDriveRouter)
 

@@ -4,14 +4,17 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "functions": {
-    "api/index.ts": {
-      "maxDuration": 300,
+    "api/[[...route]].ts": {
+      "maxDuration": 60,
       "memory": 2048
+    },
+    "api/health.ts": {
+      "maxDuration": 10,
+      "memory": 1024
     }
   },
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api" },
-    { "source": "/health", "destination": "/api" },
-    { "source": "/((?!assets/).*)", "destination": "/index.html" }
+    { "source": "/health", "destination": "/api/health" },
+    { "source": "/((?!api/|assets/).*)", "destination": "/index.html" }
   ]
 }

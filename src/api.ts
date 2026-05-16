@@ -60,6 +60,12 @@ export async function apiJson<T>(
     throw new Error(fetchFailedMessage(e))
   }
   const text = await res.text()
+  const trimmed = text.trimStart()
+  if (trimmed.startsWith('<!') || trimmed.startsWith('<html')) {
+    throw new Error(
+      'El servidor devolvió HTML en lugar de JSON (suele ser un fallo de rutas en Vercel). Comprueba /api/health y que exista api/[[...route]].ts.',
+    )
+  }
   let data: unknown = null
   try {
     data = text ? JSON.parse(text) : null
@@ -95,7 +101,7 @@ export async function apiPdfBlob(path: string, token: string): Promise<Blob> {
 /** Comprueba que el API responde (sin auth). Útil en diagnóstico de despliegue. */
 export async function pingApiHealth(): Promise<{ ok: boolean; detail: string }> {
   try {
-    const url = `${apiBase()}/health`
+    const url = `${apiBase()}/api/health`
     const res = await fetch(url)
     if (!res.ok) return { ok: false, detail: `HTTP ${res.status}` }
     const j = (await res.json()) as { status?: string }
