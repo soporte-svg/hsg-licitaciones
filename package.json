@@ -1,0 +1,50 @@
+{
+  "name": "licitaciones",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n api,web \"npm run dev:api\" \"npm run dev:web:wait\"",
+    "dev:web": "vite",
+    "dev:web:wait": "wait-on -t 60000 http-get://127.0.0.1:3100/health && vite",
+    "dev:api": "tsx watch server/index.ts",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.95.2",
+    "@hono/node-server": "^1.11.0",
+    "@hono/zod-validator": "^0.8.0",
+    "@supabase/supabase-js": "^2.43.0",
+    "dotenv": "^17.4.2",
+    "googleapis": "^171.4.0",
+    "hono": "^4.3.0",
+    "mammoth": "^1.11.0",
+    "openai": "^5.23.2",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "ws": "^8.20.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@tailwindcss/vite": "^4.3.0",
+    "@types/node": "^24.12.3",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^9.2.0",
+    "eslint": "^10.3.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.6.0",
+    "tailwindcss": "^4.3.0",
+    "tsx": "^4.11.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.59.2",
+    "vite": "^8.0.12",
+    "wait-on": "^8.0.5"
+  }
+}
