@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from './supabase.js'
-import type { CriterioRow, DocumentacionAsignacion, PropuestaExtract, RequisitoDocumentoTr } from './convocatorias-drive-ia.js'
+import type { CriterioRow, DocumentacionAsignacion, PropuestaExtract, RequisitoDocumentoTr } from './analisis-ia-types.js'
 
 export type ProveedorExtraccionCache = {
   folder_id: string

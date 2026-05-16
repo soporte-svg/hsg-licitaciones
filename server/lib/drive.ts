@@ -28,7 +28,14 @@ function parseServiceAccount(): { client_email: string; private_key: string } {
     )
   }
 
-  const parsed = JSON.parse(jsonStr) as { client_email?: string; private_key?: string }
+  let parsed: { client_email?: string; private_key?: string }
+  try {
+    parsed = JSON.parse(jsonStr) as { client_email?: string; private_key?: string }
+  } catch {
+    throw new Error(
+      'GOOGLE_SERVICE_ACCOUNT_KEY no es JSON válido. En Vercel pega el archivo .json completo en una sola variable (sin ruta a secrets/).',
+    )
+  }
   if (!parsed.client_email || !parsed.private_key) {
     throw new Error('Credenciales Google: faltan client_email o private_key en el JSON.')
   }
@@ -39,6 +46,8 @@ export { getDriveRootFolderId, getTerminosFolderId } from './drive-config.js'
 
 let driveClientPromise: ReturnType<typeof google.drive> | null = null
 
+const DRIVE_AUTH_TIMEOUT_MS = Number(process.env.DRIVE_AUTH_TIMEOUT_MS) || 20_000
+
 export async function getDriveClient() {
   if (!driveClientPromise) {
     driveClientPromise = (async () => {
@@ -48,7 +57,7 @@ export async function getDriveClient() {
         key: creds.private_key,
         scopes: [DRIVE_READONLY],
       })
-      await auth.authorize()
+      await withTimeout(auth.authorize(), DRIVE_AUTH_TIMEOUT_MS, 'Google auth')
       return google.drive({ version: 'v3', auth })
     })()
   }

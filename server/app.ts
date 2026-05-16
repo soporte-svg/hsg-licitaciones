@@ -46,9 +46,14 @@ app.get('/health', (c) => c.json({ status: 'ok', service: 'licitaciones-api' }))
 app.get('/api/health', (c) => c.json({ status: 'ok', service: 'licitaciones-api' }))
 
 const CONVOCATORIAS_BASE = '/api/convocatorias-drive'
+let convocatoriasRouterPromise: Promise<typeof import('./routes/convocatorias-drive.js')> | null = null
+
 const convocatoriasLazy = new Hono()
 convocatoriasLazy.all('/*', async (c) => {
-  const { default: router } = await import('./routes/convocatorias-drive.js')
+  if (!convocatoriasRouterPromise) {
+    convocatoriasRouterPromise = import('./routes/convocatorias-drive.js')
+  }
+  const { default: router } = await convocatoriasRouterPromise
   const url = new URL(c.req.url)
   if (url.pathname.startsWith(CONVOCATORIAS_BASE)) {
     url.pathname = url.pathname.slice(CONVOCATORIAS_BASE.length) || '/'

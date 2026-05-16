@@ -19,7 +19,9 @@ if (!process.env.LICITACIONES_WEB_ORIGIN?.trim() && process.env.LICITACIONES_FRO
   process.env.LICITACIONES_WEB_ORIGIN = process.env.LICITACIONES_FRONTEND_URL.trim()
 }
 
-const drivePath = process.env.DRIVE_CREDENTIALS_JSON?.trim()
-if (drivePath && !isAbsolute(drivePath)) {
-  process.env.DRIVE_CREDENTIALS_JSON = resolve(root, drivePath)
+if (!process.env.VERCEL) {
+  const drivePath = process.env.DRIVE_CREDENTIALS_JSON?.trim()
+  if (drivePath && !isAbsolute(drivePath)) {
+    process.env.DRIVE_CREDENTIALS_JSON = resolve(root, drivePath)
+  }
 }

@@ -14,8 +14,8 @@
     }
   },
   "routes": [
-    { "src": "/health", "dest": "/api/health" },
-    { "src": "/api/health", "dest": "/api/health" },
+    { "src": "/health", "dest": "/api-health.json" },
+    { "src": "/api/health", "dest": "/api-health.json" },
     { "src": "/api/convocatorias-drive/(.*)", "dest": "/api" },
     { "src": "/api/(.*)", "dest": "/api" },
     { "handle": "filesystem" },
