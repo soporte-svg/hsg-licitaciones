@@ -1,7 +1,7 @@
 /**
  * Único handler serverless: todas las peticiones /api/* y /health se reenvían aquí vía vercel.json → routes.
  */
-import { handle } from 'hono/vercel'
+import { handle } from '@hono/node-server/vercel'
 import { app } from '../server/app.js'
 
 export const config = {

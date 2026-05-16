@@ -2,6 +2,7 @@ import './load-env.js'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
+import convocatoriasDriveRouter from './routes/convocatorias-drive.js'
 
 /** Orígenes permitidos (CORS). Separa varios con coma en LICITACIONES_WEB_ORIGIN. */
 export function allowedCorsOrigins(): string[] {
@@ -45,21 +46,6 @@ app.use(
 app.get('/health', (c) => c.json({ status: 'ok', service: 'licitaciones-api' }))
 app.get('/api/health', (c) => c.json({ status: 'ok', service: 'licitaciones-api' }))
 
-const CONVOCATORIAS_BASE = '/api/convocatorias-drive'
-let convocatoriasRouterPromise: Promise<typeof import('./routes/convocatorias-drive.js')> | null = null
-
-const convocatoriasLazy = new Hono()
-convocatoriasLazy.all('/*', async (c) => {
-  if (!convocatoriasRouterPromise) {
-    convocatoriasRouterPromise = import('./routes/convocatorias-drive.js')
-  }
-  const { default: router } = await convocatoriasRouterPromise
-  const url = new URL(c.req.url)
-  if (url.pathname.startsWith(CONVOCATORIAS_BASE)) {
-    url.pathname = url.pathname.slice(CONVOCATORIAS_BASE.length) || '/'
-  }
-  return router.fetch(new Request(url, c.req.raw), c.env, c.executionCtx)
-})
-app.route(CONVOCATORIAS_BASE, convocatoriasLazy)
+app.route('/api/convocatorias-drive', convocatoriasDriveRouter)
 
 app.notFound((c) => c.json({ data: null, error: { code: 'NOT_FOUND', message: 'Ruta no encontrada' } }, 404))
