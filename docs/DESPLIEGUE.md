@@ -1,30 +1,57 @@
 # Despliegue en producción
 
-El proyecto tiene **dos partes** que no pueden vivir solo en Vercel estático:
+## Opción A — Todo en Vercel (recomendado)
 
-| Parte | Qué es | Dónde desplegar |
-|-------|--------|------------------|
-| **Frontend** | React (`dist/`) | **Vercel** (recomendado) |
-| **API** | Node + Hono (`server/`) | **Railway**, **Render**, Fly.io, VPS, etc. |
+Un solo proyecto en [Vercel](https://vercel.com): el front (`dist/`) y el API (`api/index.ts` → Hono serverless) comparten el dominio, por ejemplo [https://hsg-licitaciones.vercel.app](https://hsg-licitaciones.vercel.app).
 
-El login usa **Supabase** directo desde el navegador (funciona en Vercel).  
-Las carpetas de Drive y **Comparar** pasan por el API: si el API no está arriba o `VITE_API_URL` falla, verás *«No se pudo conectar con el API»*.
+**No necesitas `VITE_API_URL`**: el navegador llama a `/api/...` en el mismo dominio.
 
-> **Comparar** puede tardar 5–15 minutos. Vercel Serverless tiene límite de tiempo (~60 s en hobby); **no** uses Vercel solo para el API. Usa un servicio con proceso Node largo y timeout alto.
+### Variables en Vercel
+
+| Variable | Obligatoria |
+|----------|-------------|
+| `VITE_SUPABASE_URL` | Sí |
+| `VITE_SUPABASE_ANON_KEY` | Sí |
+| `SUPABASE_SERVICE_ROLE_KEY` | Sí (serverless) |
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | Sí — **JSON completo** del service account (una línea). No uses ruta `secrets/` en Vercel |
+| `GOOGLE_DRIVE_ROOT_FOLDER_ID` | Sí |
+| `GOOGLE_DRIVE_TERMINOS_FOLDER_ID` | Sí |
+| `LLM_PROVIDER`, claves OpenAI/Anthropic | Sí |
+| `LICITACIONES_WEB_ORIGIN` | Opcional (`https://hsg-licitaciones.vercel.app`); Vercel también añade `VERCEL_URL` al CORS |
+| `VITE_API_URL` | **No** (déjala vacía o no la crees) |
+
+### Comprobar
+
+1. `https://hsg-licitaciones.vercel.app/health` → `{"status":"ok",...}`
+2. Login y carpetas Drive en la app
+
+### Límite de tiempo (importante)
+
+**Comparar** puede tardar **5–15 minutos**. La función en `api/index.ts` pide `maxDuration: 300` (5 min). Eso requiere **plan Vercel Pro**. En Hobby el tope es ~10–60 s y Comparar puede cortarse.
+
+Si Comparar falla por timeout en Vercel, usa la [Opción B](#opción-b--vercel--api-en-renderrailway) (API en Render con proceso largo).
+
+### Redeploy
+
+Tras cambiar variables, haz **Redeploy** en Vercel.
 
 ---
 
-## Checklist rápido
+## Opción B — Vercel + API en Render/Railway
+
+Front en Vercel y API Node aparte (más tiempo de ejecución para Comparar).
+
+---
+
+## Checklist (solo Opción B)
 
 - [ ] API desplegado y `https://tu-api.../health` devuelve `{"status":"ok",...}`
-- [ ] En **Vercel** → Environment Variables → `VITE_API_URL=https://tu-api...` (sin `/` final)
-- [ ] En el **API** → `LICITACIONES_WEB_ORIGIN=https://tu-app.vercel.app` (o varias URLs separadas por coma)
-- [ ] Mismas variables de Supabase, IA y Google Drive en el API que en local
-- [ ] **Redeploy** de Vercel después de cambiar `VITE_*` (se inyectan en el build)
+- [ ] En **Vercel** → `VITE_API_URL=https://tu-api...` (sin `/` final) → **Redeploy**
+- [ ] En el **API** → `LICITACIONES_WEB_ORIGIN=https://tu-app.vercel.app`
 
 ---
 
-## 1. Desplegar el API (ejemplo Render)
+## 1. Desplegar el API en Render (Opción B)
 
 1. Crea un **Web Service** conectado al repo `hsg-licitaciones`.
 2. **Root directory:** `licitaciones` (si el repo es el monorepo padre, ajusta la ruta).

@@ -17,7 +17,9 @@ function parseServiceAccount(): { client_email: string; private_key: string } {
     jsonStr = inline
   } else if (pathLike) {
     if (!existsSync(pathLike)) {
-      throw new Error(`Archivo de credenciales no encontrado: ${pathLike}`)
+      throw new Error(
+        `Archivo de credenciales no encontrado: ${pathLike}. En Vercel usa la variable GOOGLE_SERVICE_ACCOUNT_KEY con el JSON completo del service account.`,
+      )
     }
     jsonStr = readFileSync(pathLike, 'utf8')
   } else {

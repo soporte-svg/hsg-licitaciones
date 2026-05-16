@@ -1,12 +1,16 @@
-/** Base del API: en dev, vacío = rutas relativas /api/... (proxy en vite.config). En prod, URL absoluta del API desplegado. */
+/**
+ * Base del API.
+ * - Dev: vacío → proxy Vite `/api` → localhost:3100
+ * - Vercel (monolito): vacío → mismo origen (`/api/...` en hsg-licitaciones.vercel.app)
+ * - API externo: `VITE_API_URL=https://tu-api.onrender.com`
+ */
 function apiBase(): string {
   const raw = import.meta.env.VITE_API_URL
   const b = typeof raw === 'string' ? raw.trim().replace(/\/$/, '') : ''
   if (b) return b
   if (import.meta.env.DEV) return ''
-  throw new Error(
-    'Falta VITE_API_URL en el build de Vercel. Añádela en Settings → Environment Variables (URL pública del API en Railway/Render, sin barra final) y vuelve a desplegar.',
-  )
+  if (typeof window !== 'undefined') return window.location.origin
+  return ''
 }
 
 function apiUrl(path: string): string {
@@ -28,8 +32,8 @@ function fetchFailedMessage(cause?: unknown): string {
   })()
   const lines = [
     'No se pudo conectar con el API.',
-    `URL configurada: ${base}`,
-    'Comprueba: (1) el API está desplegado y responde en /health, (2) VITE_API_URL en Vercel coincide con esa URL, (3) LICITACIONES_WEB_ORIGIN en el API incluye tu dominio de Vercel (ej. https://tu-app.vercel.app).',
+    `URL: ${base}`,
+    'Comprueba /health en el mismo dominio. En Vercel monolito no hace falta VITE_API_URL. Si el API está en otro host, define VITE_API_URL y redeploy.',
   ]
   if (cause instanceof Error && cause.message && !cause.message.includes('No se pudo')) {
     lines.push(`Detalle: ${cause.message}`)

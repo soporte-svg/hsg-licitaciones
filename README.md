@@ -347,16 +347,11 @@ licitaciones/
 
 ## Despliegue
 
-**Vercel solo sirve el frontend.** El API Node debe ir en Railway, Render u otro host. Si ves *«No se pudo conectar con el API»* tras el login, falta desplegar el API o configurar `VITE_API_URL`.
+**Todo en Vercel (recomendado):** front + API serverless en el mismo dominio. No hace falta `VITE_API_URL`. Ver **[docs/DESPLIEGUE.md](./docs/DESPLIEGUE.md)** (Opción A).
 
-Guía paso a paso: **[docs/DESPLIEGUE.md](./docs/DESPLIEGUE.md)**
+En Vercel usa `GOOGLE_SERVICE_ACCOUNT_KEY` (JSON inline), no la ruta `secrets/`. Comparar largo requiere **Vercel Pro** (timeout hasta 300 s).
 
-Resumen:
-
-1. **API:** `npm run start:api` (lee `PORT` o `LICITACIONES_API_PORT`).  
-2. **Vercel:** variables `VITE_SUPABASE_*` y **`VITE_API_URL=https://tu-api-publica`** → redeploy.  
-3. **API:** `LICITACIONES_WEB_ORIGIN=https://tu-app.vercel.app` (varios orígenes separados por coma).  
-4. **Timeout** del comparador: ≥ 600 s en el host del API.
+**Alternativa:** front en Vercel + API en Render (`VITE_API_URL` apuntando al API externo) — Opción B en la guía.
 
 ---
 
