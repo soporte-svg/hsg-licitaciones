@@ -22,8 +22,9 @@ Un solo proyecto en [Vercel](https://vercel.com): el front (`dist/`) y el API (`
 
 ### Comprobar
 
-1. `https://hsg-licitaciones.vercel.app/health` → `{"status":"ok",...}`
-2. Login y carpetas Drive en la app
+1. `https://hsg-licitaciones.vercel.app/health` → `{"status":"ok",...}` (si ves HTML 404 de Vercel, redeploy con `vercel.json` → `routes` y `api/index.ts`)
+2. `https://hsg-licitaciones.vercel.app/api/health` → mismo JSON
+3. Login y carpetas Drive en la app
 
 ### Límite de tiempo (importante)
 
