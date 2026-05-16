@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type SVGProps } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type SVGProps } from 'react'
 import { apiJson, apiPdfBlob } from './api'
 import { supabase } from './lib/supabase'
 import { PageChrome } from './PageChrome'
@@ -145,6 +145,33 @@ function IconSearch(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+function IconSpinner(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg className="ui-spinner" viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="42" strokeDashoffset="12" />
+    </svg>
+  )
+}
+
+function InlineLoader({ label }: { label: string }) {
+  return (
+    <p className="inline-loader" role="status" aria-live="polite">
+      <IconSpinner className="inline-loader__icon" />
+      <span>{label}</span>
+    </p>
+  )
+}
+
+function ListSkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <ul className="list list-skeleton" aria-hidden>
+      {Array.from({ length: rows }, (_, i) => (
+        <li key={i} className="list-skeleton__row" />
+      ))}
+    </ul>
+  )
+}
+
 export default function App() {
   const [session, setSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>['data']['session']>(null)
   const [authLoading, setAuthLoading] = useState(true)
@@ -183,6 +210,8 @@ export default function App() {
   const [analisisRecientes, setAnalisisRecientes] = useState<AnalisisRecienteRow[]>([])
   const [analisisRecientesLoading, setAnalisisRecientesLoading] = useState(false)
 
+  const browseGenRef = useRef(0)
+
   useEffect(() => {
     setCuadroTab('resumen')
   }, [historialSelectedId])
@@ -206,6 +235,7 @@ export default function App() {
 
   const loadBrowse = useCallback(async () => {
     if (!token) return
+    const gen = ++browseGenRef.current
     setBrowseLoading(true)
     setBrowseError(null)
     try {
@@ -214,14 +244,16 @@ export default function App() {
         `/api/convocatorias-drive/browse${q}`,
         token,
       )
+      if (gen !== browseGenRef.current) return
       setFolders(data.folders ?? [])
       setFiles(data.files ?? [])
     } catch (e) {
+      if (gen !== browseGenRef.current) return
       setFolders([])
       setFiles([])
       setBrowseError(e instanceof Error ? e.message : 'Error cargando carpetas')
     } finally {
-      setBrowseLoading(false)
+      if (gen === browseGenRef.current) setBrowseLoading(false)
     }
   }, [token, currentParentId])
 
@@ -359,9 +391,7 @@ export default function App() {
     setPdfUrl(null)
   }
 
-  function enterFolder(f: BrowseItem) {
-    if (f.type !== 'folder') return
-    setCrumbs((c) => [...c, { id: f.id, name: f.name }])
+  function clearPanelOnNavigate() {
     setCompararResult(null)
     setAnalisisGuardado(null)
     setHistorialSelectedId(null)
@@ -370,14 +400,29 @@ export default function App() {
     setPdfTitle(null)
   }
 
+  function enterFolder(f: BrowseItem) {
+    if (f.type !== 'folder' || browseLoading) return
+    const last = crumbs[crumbs.length - 1]
+    if (last?.id === f.id) return
+    clearPanelOnNavigate()
+    setFolders([])
+    setFiles([])
+    setBrowseError(null)
+    setCrumbs((c) => {
+      const tail = c[c.length - 1]
+      if (tail?.id === f.id) return c
+      return [...c, { id: f.id, name: f.name }]
+    })
+  }
+
   function goCrumb(i: number) {
+    if (i < 0 || i >= crumbs.length) return
+    if (i === crumbs.length - 1 && !browseLoading) return
+    clearPanelOnNavigate()
+    setFolders([])
+    setFiles([])
+    setBrowseError(null)
     setCrumbs((c) => c.slice(0, i + 1))
-    setCompararResult(null)
-    setAnalisisGuardado(null)
-    setHistorialSelectedId(null)
-    if (pdfUrl) URL.revokeObjectURL(pdfUrl)
-    setPdfUrl(null)
-    setPdfTitle(null)
   }
 
   async function openPdf(f: BrowseItem) {
@@ -414,15 +459,13 @@ export default function App() {
   }
 
   function abrirConvocatoriaDesdeResumen(row: AnalisisRecienteRow) {
-    if (!token) return
+    if (!token || browseLoading) return
     const crumbName = row.servicio?.trim() || row.conjunto?.trim() || 'Servicio'
+    setFolders([])
+    setFiles([])
+    setBrowseError(null)
     setCrumbs([{ id: null, name: 'Drive' }, { id: row.folder_id, name: crumbName }])
-    setCompararResult(null)
-    if (pdfUrl) {
-      URL.revokeObjectURL(pdfUrl)
-      setPdfUrl(null)
-    }
-    setPdfTitle(null)
+    clearPanelOnNavigate()
     void abrirAnalisisGuardado(row.id)
   }
 
@@ -721,7 +764,12 @@ export default function App() {
               {crumbs.map((c, i) => (
                 <span key={`${c.id ?? 'root'}-${i}`}>
                   {i > 0 ? <span className="sep"> / </span> : null}
-                  <button type="button" className="linkish" onClick={() => goCrumb(i)}>
+                  <button
+                    type="button"
+                    className="linkish"
+                    disabled={browseLoading && i === crumbs.length - 1}
+                    onClick={() => goCrumb(i)}
+                  >
                     {c.name}
                   </button>
                 </span>
@@ -729,34 +777,52 @@ export default function App() {
             </nav>
 
             <h2>Carpetas</h2>
-            {browseLoading ? <p className="muted">…</p> : null}
+            {browseLoading ? <InlineLoader label="Cargando carpetas…" /> : null}
             {browseError ? <p className="error">{browseError}</p> : null}
-            <ul className="list">
-              {filteredFolders.map((f) => (
-                <li key={f.id}>
-                  <button type="button" className="row-btn" onClick={() => enterFolder(f)}>
-                    {f.name}
-                  </button>
-                </li>
-              ))}
-            </ul>
+            {browseLoading ? (
+              <ListSkeleton rows={8} />
+            ) : (
+              <ul className="list">
+                {filteredFolders.map((f) => (
+                  <li key={f.id}>
+                    <button
+                      type="button"
+                      className="row-btn"
+                      disabled={browseLoading}
+                      onClick={() => enterFolder(f)}
+                    >
+                      {f.name}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
             {!browseLoading && folders.length > 0 && filteredFolders.length === 0 ? (
               <p className="hint muted">Sin coincidencias en carpetas.</p>
             ) : null}
 
             <h3>PDFs</h3>
-            <ul className="list">
-              {filteredFiles.map((f) => (
-                <li key={f.id}>
-                  <button type="button" className="row-btn" onClick={() => void openPdf(f)}>
-                    {f.name}
-                    {f.type === 'pdf' && isTerminosName(f.name) ? (
-                      <span className="badge">TR</span>
-                    ) : null}
-                  </button>
-                </li>
-              ))}
-            </ul>
+            {browseLoading ? (
+              <ListSkeleton rows={3} />
+            ) : (
+              <ul className="list">
+                {filteredFiles.map((f) => (
+                  <li key={f.id}>
+                    <button
+                      type="button"
+                      className="row-btn"
+                      disabled={browseLoading}
+                      onClick={() => void openPdf(f)}
+                    >
+                      {f.name}
+                      {f.type === 'pdf' && isTerminosName(f.name) ? (
+                        <span className="badge">TR</span>
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
             {!browseLoading && files.length > 0 && filteredFiles.length === 0 ? (
               <p className="hint muted">Sin coincidencias en PDFs.</p>
             ) : null}
@@ -769,11 +835,17 @@ export default function App() {
                   disabled={!puedeComparar || compararLoading}
                   onClick={() => void comparar()}
                 >
-                  {compararLoading ? `… ${folders.length}` : 'Comparar'}
+                  {compararLoading ? (
+                    <>
+                      <IconSpinner className="inline-loader__icon" /> Comparando…
+                    </>
+                  ) : (
+                    'Comparar'
+                  )}
                 </button>
                 {compararLoading ? (
                   <p className="hint muted">
-                    2–8 min · revisa terminal <code>[api]</code>
+                    2–8 min · no cierres esta pestaña
                   </p>
                 ) : null}
                 {!puedeComparar ? (
@@ -795,7 +867,7 @@ export default function App() {
             {historial.length > 0 ? (
               <>
                 <h3>Historial</h3>
-                {historialDetalleLoading ? <p className="muted">…</p> : null}
+                {historialDetalleLoading ? <InlineLoader label="Cargando análisis…" /> : null}
                 <ul className="list small">
                   {historial.map((h) => (
                     <li key={h.id}>
@@ -826,7 +898,9 @@ export default function App() {
                   <h2 className="recientes-resumen__title">Ya analizadas</h2>
                   <p className="recientes-resumen__hint muted">Filtra con la búsqueda del panel izquierdo.</p>
                 </div>
-                {analisisRecientesLoading ? <p className="muted recientes-resumen__status">Cargando…</p> : null}
+                {analisisRecientesLoading ? (
+                  <InlineLoader label="Cargando análisis recientes…" />
+                ) : null}
                 {!analisisRecientesLoading && analisisRecientesFiltrados.length === 0 ? (
                   <p className="hint muted recientes-resumen__status">
                     {asideFilter.trim()
@@ -845,6 +919,7 @@ export default function App() {
                           <button
                             type="button"
                             className="reciente-row"
+                            disabled={browseLoading}
                             onClick={() => abrirConvocatoriaDesdeResumen(row)}
                             title="Abrir carpeta en Drive y ver este análisis"
                           >
@@ -867,6 +942,10 @@ export default function App() {
             <h2 className="analysis-hero-title">
               {vista ? (analysisHeadline || 'Cuadro comparativo') : 'Cuadro comparativo'}
             </h2>
+
+            {currentParentId && browseLoading ? (
+              <InlineLoader label="Abriendo carpeta en Drive…" />
+            ) : null}
 
             <p className="analysis-meta">
               {vista ? (
