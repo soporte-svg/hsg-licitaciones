@@ -3,15 +3,8 @@ import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { requireAuth } from '../middleware/auth.js'
 import { supabaseAdmin } from '../lib/supabase.js'
-import {
-  downloadFileBuffer,
-  downloadTerminosFile,
-  findTerminosFileForServiceFolder,
-  getDriveRootFolderId,
-  inferConvocatoriaMeta,
-  listChildren,
-  walkAncestorsFromFolder,
-} from '../lib/drive.js'
+import { getDriveRootFolderId } from '../lib/drive-config.js'
+import { getDrive } from '../lib/lazy-drive.js'
 import { enrichAsignacionesWithFileIds } from '../lib/documentacion-enrich.js'
 import { getConvocatoriasIa } from '../lib/lazy-ia.js'
 import {
@@ -31,8 +24,9 @@ const compararBodySchema = z.object({
 
 router.get('/folders', requireAuth, async (c) => {
   try {
+    const drive = await getDrive()
     const parentId = c.req.query('parent_id')?.trim() || getDriveRootFolderId()
-    const folders = await listChildren(parentId).then((raw) =>
+    const folders = await drive.listChildren(parentId).then((raw) =>
       raw
         .filter((f) => f.mimeType === 'application/vnd.google-apps.folder' && f.id && f.name)
         .map((f) => ({ id: f.id!, name: f.name!, type: 'folder' as const })),
@@ -46,8 +40,9 @@ router.get('/folders', requireAuth, async (c) => {
 
 router.get('/browse', requireAuth, async (c) => {
   try {
+    const drive = await getDrive()
     const parentId = c.req.query('parent_id')?.trim() || getDriveRootFolderId()
-    const raw = await listChildren(parentId)
+    const raw = await drive.listChildren(parentId)
     const folders = raw
       .filter((f) => f.mimeType === 'application/vnd.google-apps.folder' && f.id && f.name)
       .map((f) => ({ id: f.id!, name: f.name!, type: 'folder' as const }))
@@ -67,7 +62,8 @@ router.get('/pdf', requireAuth, async (c) => {
     return c.json({ data: null, error: { code: 'BAD_REQUEST', message: 'file_id requerido' } }, 400)
   }
   try {
-    const { buffer, name, mimeType } = await downloadFileBuffer(fileId)
+    const drive = await getDrive()
+    const { buffer, name, mimeType } = await drive.downloadFileBuffer(fileId)
     if (mimeType !== 'application/pdf') {
       return c.json(
         { data: null, error: { code: 'NOT_PDF', message: `El archivo no es PDF (${mimeType}).` } },
@@ -140,7 +136,8 @@ router.get('/terminos', requireAuth, async (c) => {
     return c.json({ data: null, error: { code: 'BAD_REQUEST', message: 'folder_id requerido' } }, 400)
   }
   try {
-    const terminos = await findTerminosFileForServiceFolder(folderId)
+    const drive = await getDrive()
+    const terminos = await drive.findTerminosFileForServiceFolder(folderId)
     if (!terminos) {
       return c.json({
         data: null,
@@ -167,10 +164,11 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
   const userEmail = c.get('userEmail')
   const t0 = Date.now()
   const ia = await getConvocatoriasIa()
+  const drive = await getDrive()
 
   try {
     compararLog(`inicio folder=${folderId}`)
-    const terminos = await findTerminosFileForServiceFolder(folderId)
+    const terminos = await drive.findTerminosFileForServiceFolder(folderId)
 
     if (!terminos?.id) {
       return c.json(
@@ -186,7 +184,7 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
       )
     }
 
-    const rawFolders = await listChildren(folderId)
+    const rawFolders = await drive.listChildren(folderId)
     const proveedorFolders = rawFolders
       .filter((f) => f.mimeType === 'application/vnd.google-apps.folder' && f.id && f.name)
       .map((f) => ({ id: f.id!, name: f.name! }))
@@ -221,7 +219,7 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
     } else {
       compararLog('descargando términos…')
       const { buffer: terminosBuf, name: terminosName, mimeType: terminosMime } =
-        await downloadTerminosFile(terminos.id, terminos.mimeType)
+        await drive.downloadTerminosFile(terminos.id, terminos.mimeType)
       compararLog('extrayendo criterios y documentación exigida (Claude en paralelo)…')
       ;[criterios, documentosRequeridosTr] = await Promise.all([
         ia.extractCriteriosFromTerminosDocument(terminosBuf, terminosName, terminosMime),
@@ -239,7 +237,7 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
     for (let i = 0; i < proveedorFolders.length; i++) {
       const folder = proveedorFolders[i]!
       compararLog(`proveedor ${i + 1}/${proveedorFolders.length}: ${folder.name}`)
-      const files = await listChildren(folder.id)
+      const files = await drive.listChildren(folder.id)
       const archivosDetalle = files
         .filter((f) => f.mimeType !== 'application/vnd.google-apps.folder' && f.id && f.name)
         .map((f) => ({ id: f.id!, name: f.name! }))
@@ -286,7 +284,7 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
       compararLog(`  ${pdfs.length} PDF(s), descargando…`)
       const pdfBuffers = await Promise.all(
         pdfs.map(async (pdf) => {
-          const { buffer, name } = await downloadFileBuffer(pdf.id!)
+          const { buffer, name } = await drive.downloadFileBuffer(pdf.id!)
           return { name, buffer }
         }),
       )
@@ -347,8 +345,8 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
     compararLog('análisis extendido por criterio + financiero (Claude)…')
     const analisisExtendido = await ia.buildAnalisisExtendido({ criterios, propuestas: propuestasRaw })
 
-    const names = await walkAncestorsFromFolder(folderId)
-    const { conjunto, servicio, anio } = inferConvocatoriaMeta(names)
+    const names = await drive.walkAncestorsFromFolder(folderId)
+    const { conjunto, servicio, anio } = drive.inferConvocatoriaMeta(names)
 
     const propuestasDb = ranked.todas_las_propuestas.map((p) => {
       const ext =

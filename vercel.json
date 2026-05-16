@@ -4,13 +4,19 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "functions": {
+    "api/health.ts": {
+      "maxDuration": 10,
+      "memory": 256
+    },
     "api/index.ts": {
       "maxDuration": 60,
       "memory": 2048
     }
   },
   "routes": [
-    { "src": "/health", "dest": "/api" },
+    { "src": "/health", "dest": "/api/health" },
+    { "src": "/api/health", "dest": "/api/health" },
+    { "src": "/api/convocatorias-drive/(.*)", "dest": "/api" },
     { "src": "/api/(.*)", "dest": "/api" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
