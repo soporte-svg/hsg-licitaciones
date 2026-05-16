@@ -3,7 +3,6 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
-  "serverExternalPackages": ["googleapis"],
   "functions": {
     "api/index.ts": {
       "maxDuration": 60,
