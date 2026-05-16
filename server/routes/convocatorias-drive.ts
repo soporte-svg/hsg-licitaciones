@@ -12,16 +12,8 @@ import {
   listChildren,
   walkAncestorsFromFolder,
 } from '../lib/drive.js'
-import {
-  buildAnalisisExtendido,
-  clasificarDocumentacionProveedores,
-  enrichAsignacionesWithFileIds,
-  extractCriteriosFromTerminosDocument,
-  extractDocumentosRequeridosFromTerminos,
-  extractPropuestaFromPdfs,
-  formatAnthropicError,
-  scoreAndRankTop3,
-} from '../lib/convocatorias-drive-ia.js'
+import { enrichAsignacionesWithFileIds } from '../lib/documentacion-enrich.js'
+import { getConvocatoriasIa } from '../lib/lazy-ia.js'
 import {
   fingerprintDocumentosRequeridos,
   fingerprintDrivePorServicio,
@@ -174,6 +166,7 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
   const { folder_id: folderId } = c.req.valid('json')
   const userEmail = c.get('userEmail')
   const t0 = Date.now()
+  const ia = await getConvocatoriasIa()
 
   try {
     compararLog(`inicio folder=${folderId}`)
@@ -218,8 +211,8 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
         iaCache.criterios.length > 0,
     )
 
-    let criterios: Awaited<ReturnType<typeof extractCriteriosFromTerminosDocument>>
-    let documentosRequeridosTr: Awaited<ReturnType<typeof extractDocumentosRequeridosFromTerminos>>
+    let criterios: Awaited<ReturnType<typeof ia.extractCriteriosFromTerminosDocument>>
+    let documentosRequeridosTr: Awaited<ReturnType<typeof ia.extractDocumentosRequeridosFromTerminos>>
 
     if (trCacheHit && iaCache) {
       criterios = iaCache.criterios
@@ -231,14 +224,14 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
         await downloadTerminosFile(terminos.id, terminos.mimeType)
       compararLog('extrayendo criterios y documentación exigida (Claude en paralelo)…')
       ;[criterios, documentosRequeridosTr] = await Promise.all([
-        extractCriteriosFromTerminosDocument(terminosBuf, terminosName, terminosMime),
-        extractDocumentosRequeridosFromTerminos(terminosBuf, terminosName, terminosMime),
+        ia.extractCriteriosFromTerminosDocument(terminosBuf, terminosName, terminosMime),
+        ia.extractDocumentosRequeridosFromTerminos(terminosBuf, terminosName, terminosMime),
       ])
       compararLog('caché IA · TR: miss')
     }
     compararLog(`${criterios.length} criterios · ${documentosRequeridosTr.length} ítems documentales (TR)`)
 
-    const propuestasRaw: Awaited<ReturnType<typeof extractPropuestaFromPdfs>>[] = []
+    const propuestasRaw: Awaited<ReturnType<typeof ia.extractPropuestaFromPdfs>>[] = []
     const archivosPorProveedor: { proveedor: string; archivos: { id: string; name: string }[] }[] = []
     const proveedoresExtraccionesCacheOut: ProveedorExtraccionCache[] = []
     const reutilProveedor: Record<string, 'cache' | 'ia'> = {}
@@ -297,7 +290,7 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
           return { name, buffer }
         }),
       )
-      const extracted = await extractPropuestaFromPdfs({
+      const extracted = await ia.extractPropuestaFromPdfs({
         proveedorNombre: folder.name,
         criterios,
         pdfBuffers,
@@ -325,7 +318,7 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
         documentosRequeridosTr.length > 0,
     )
 
-    let asignacionesDoc: Awaited<ReturnType<typeof clasificarDocumentacionProveedores>>
+    let asignacionesDoc: Awaited<ReturnType<typeof ia.clasificarDocumentacionProveedores>>
     if (documentosRequeridosTr.length === 0) {
       asignacionesDoc = []
       compararLog('documentación TR: sin requisitos documentales — sin clasificación')
@@ -334,7 +327,7 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
       compararLog('caché IA · clasificación documentación: hit')
     } else {
       compararLog('cuadro documentación proveedores vs TR…')
-      asignacionesDoc = await clasificarDocumentacionProveedores({
+      asignacionesDoc = await ia.clasificarDocumentacionProveedores({
         requisitos: documentosRequeridosTr,
         porProveedor: archivosPorProveedor,
       })
@@ -349,10 +342,10 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
     )
 
     compararLog('puntuando y ranking (Claude)…')
-    const ranked = await scoreAndRankTop3({ criterios, propuestas: propuestasRaw })
+    const ranked = await ia.scoreAndRankTop3({ criterios, propuestas: propuestasRaw })
 
     compararLog('análisis extendido por criterio + financiero (Claude)…')
-    const analisisExtendido = await buildAnalisisExtendido({ criterios, propuestas: propuestasRaw })
+    const analisisExtendido = await ia.buildAnalisisExtendido({ criterios, propuestas: propuestasRaw })
 
     const names = await walkAncestorsFromFolder(folderId)
     const { conjunto, servicio, anio } = inferConvocatoriaMeta(names)
@@ -425,7 +418,7 @@ router.post('/comparar', requireAuth, zValidator('json', compararBodySchema), as
       reutilizado_ia: reutilizadoIa,
     })
   } catch (e: unknown) {
-    const msg = formatAnthropicError(e)
+    const msg = ia.formatAnthropicError(e)
     console.error('[convocatorias-drive] comparar', e)
     return c.json({ data: null, error: { code: 'COMPARAR_ERROR', message: msg } }, 502)
   }

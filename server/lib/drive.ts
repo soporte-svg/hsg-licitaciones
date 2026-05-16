@@ -50,15 +50,33 @@ export function getTerminosFolderId(): string {
   return process.env.GOOGLE_DRIVE_TERMINOS_FOLDER_ID?.trim() || DEFAULT_TERMINOS_FOLDER_ID
 }
 
+let driveClientPromise: ReturnType<typeof google.drive> | null = null
+
 export async function getDriveClient() {
-  const creds = parseServiceAccount()
-  const auth = new google.auth.JWT({
-    email: creds.client_email,
-    key: creds.private_key,
-    scopes: [DRIVE_READONLY],
-  })
-  await auth.authorize()
-  return google.drive({ version: 'v3', auth })
+  if (!driveClientPromise) {
+    driveClientPromise = (async () => {
+      const creds = parseServiceAccount()
+      const auth = new google.auth.JWT({
+        email: creds.client_email,
+        key: creds.private_key,
+        scopes: [DRIVE_READONLY],
+      })
+      await auth.authorize()
+      return google.drive({ version: 'v3', auth })
+    })()
+  }
+  return driveClientPromise
+}
+
+const DRIVE_LIST_TIMEOUT_MS = Number(process.env.DRIVE_LIST_TIMEOUT_MS) || 25_000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error(`${label}: tiempo de espera agotado (${ms / 1000}s).`)), ms)
+    }),
+  ])
 }
 
 export function normalizeFileName(name: string): string {
@@ -82,14 +100,18 @@ export function isTerminosMime(mimeType?: string | null, name?: string | null): 
 
 export async function listChildren(parentId: string) {
   const drive = await getDriveClient()
-  const res = await drive.files.list({
-    q: `'${parentId}' in parents and trashed=false`,
-    fields: 'files(id,name,mimeType)',
-    pageSize: 1000,
-    orderBy: 'name_natural',
-    supportsAllDrives: true,
-    includeItemsFromAllDrives: true,
-  })
+  const res = await withTimeout(
+    drive.files.list({
+      q: `'${parentId}' in parents and trashed=false`,
+      fields: 'files(id,name,mimeType)',
+      pageSize: 200,
+      orderBy: 'name_natural',
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    }),
+    DRIVE_LIST_TIMEOUT_MS,
+    'Google Drive list',
+  )
   return res.data.files ?? []
 }
 

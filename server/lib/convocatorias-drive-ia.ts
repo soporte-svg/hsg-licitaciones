@@ -264,26 +264,9 @@ function ensureMatrizDocumentacion(
   return out
 }
 
-function adjuntarFileIdAsignaciones(
-  merged: DocumentacionAsignacion[],
-  porProveedor: { proveedor: string; archivos: ArchivoEnCarpetaProveedor[] }[],
-): DocumentacionAsignacion[] {
-  const byProv = new Map(porProveedor.map((p) => [p.proveedor, p.archivos]))
-  return merged.map((a) => {
-    if (!a.archivo) return { ...a, file_id: null }
-    const list = byProv.get(a.proveedor) ?? []
-    const hit = list.find((f) => f.name === a.archivo)
-    return { ...a, file_id: hit?.id ?? null }
-  })
-}
+import { enrichAsignacionesWithFileIds } from './documentacion-enrich.js'
 
-/** Actualiza `file_id` en asignaciones a partir de los nombres y la lista viva de Drive (p. ej. caché de IA). */
-export function enrichAsignacionesWithFileIds(
-  asignaciones: DocumentacionAsignacion[],
-  porProveedor: { proveedor: string; archivos: ArchivoEnCarpetaProveedor[] }[],
-): DocumentacionAsignacion[] {
-  return adjuntarFileIdAsignaciones(asignaciones, porProveedor)
-}
+export { enrichAsignacionesWithFileIds }
 
 /** Cruza lista de archivos por carpeta (nombres) con los requisitos documentales del TR. */
 export async function clasificarDocumentacionProveedores(args: {
@@ -326,7 +309,7 @@ export async function clasificarDocumentacionProveedores(args: {
     const ok = valid.get(a.proveedor)?.has(a.archivo ?? '') ?? false
     return ok ? a : { ...a, archivo: null, confianza: 'baja' as const }
   })
-  return adjuntarFileIdAsignaciones(cleaned, args.porProveedor)
+  return enrichAsignacionesWithFileIds(cleaned, args.porProveedor)
 }
 
 /** @deprecated Usar extractCriteriosFromTerminosDocument */
