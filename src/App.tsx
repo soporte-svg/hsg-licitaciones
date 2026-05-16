@@ -145,9 +145,18 @@ function IconSearch(props: SVGProps<SVGSVGElement>) {
   )
 }
 
-function IconSpinner(props: SVGProps<SVGSVGElement>) {
+function IconSpinner({ className, ...props }: SVGProps<SVGSVGElement>) {
+  const cls = ['ui-spinner', className].filter(Boolean).join(' ')
   return (
-    <svg className="ui-spinner" viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
+    <svg
+      className={cls}
+      width={14}
+      height={14}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+      {...props}
+    >
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="42" strokeDashoffset="12" />
     </svg>
   )
@@ -156,7 +165,7 @@ function IconSpinner(props: SVGProps<SVGSVGElement>) {
 function InlineLoader({ label }: { label: string }) {
   return (
     <p className="inline-loader" role="status" aria-live="polite">
-      <IconSpinner className="inline-loader__icon" />
+      <IconSpinner />
       <span>{label}</span>
     </p>
   )
@@ -836,9 +845,10 @@ export default function App() {
                   onClick={() => void comparar()}
                 >
                   {compararLoading ? (
-                    <>
-                      <IconSpinner className="inline-loader__icon" /> Comparando…
-                    </>
+                    <span className="btn-loading">
+                      <IconSpinner />
+                      <span>Comparando…</span>
+                    </span>
                   ) : (
                     'Comparar'
                   )}

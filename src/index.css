@@ -1340,10 +1340,25 @@ code {
 }
 
 .ui-spinner {
-  width: 1.125rem;
-  height: 1.125rem;
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  max-width: 14px;
+  max-height: 14px;
   flex-shrink: 0;
+  vertical-align: middle;
   animation: ui-spin 0.75s linear infinite;
+}
+
+.btn-loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.btn-loading .ui-spinner {
+  color: currentColor;
 }
 
 @keyframes ui-spin {
@@ -1361,7 +1376,7 @@ code {
   color: var(--muted);
 }
 
-.inline-loader__icon {
+.inline-loader .ui-spinner {
   color: var(--accent);
 }
 
