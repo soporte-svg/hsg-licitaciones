@@ -9,6 +9,7 @@
     "dev:web:wait": "wait-on -t 60000 http-get://127.0.0.1:3100/health && vite",
     "dev:api": "tsx watch server/index.ts",
     "build": "tsc -b && vite build",
+    "start:api": "tsx server/index.ts",
     "lint": "eslint .",
     "preview": "vite preview"
   },

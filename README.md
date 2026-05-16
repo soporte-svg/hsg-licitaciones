@@ -347,12 +347,16 @@ licitaciones/
 
 ## Despliegue
 
-1. **Build del front:** `npm run build` → servir `dist/` (Nginx, Vercel, etc.).  
-2. **API Node:** ejecutar `server/index.ts` con `tsx` o compilar; exponer el puerto configurado.  
-3. **Variables:** definir `VITE_*` en build time y secrets del API en runtime.  
-4. **CORS:** `LICITACIONES_WEB_ORIGIN` = URL pública del front.  
-5. **Proxy:** en producción, `VITE_API_URL` debe apuntar al API (no hay proxy Vite).  
-6. **Timeout:** el comparador puede tardar **5–15+ min**; configurar timeout del reverse proxy ≥ 600 s.
+**Vercel solo sirve el frontend.** El API Node debe ir en Railway, Render u otro host. Si ves *«No se pudo conectar con el API»* tras el login, falta desplegar el API o configurar `VITE_API_URL`.
+
+Guía paso a paso: **[docs/DESPLIEGUE.md](./docs/DESPLIEGUE.md)**
+
+Resumen:
+
+1. **API:** `npm run start:api` (lee `PORT` o `LICITACIONES_API_PORT`).  
+2. **Vercel:** variables `VITE_SUPABASE_*` y **`VITE_API_URL=https://tu-api-publica`** → redeploy.  
+3. **API:** `LICITACIONES_WEB_ORIGIN=https://tu-app.vercel.app` (varios orígenes separados por coma).  
+4. **Timeout** del comparador: ≥ 600 s en el host del API.
 
 ---
 
@@ -363,6 +367,7 @@ licitaciones/
 | [docs/ARQUITECTURA.md](./docs/ARQUITECTURA.md) | Pipeline de comparación, módulos y decisiones técnicas |
 | [docs/API.md](./docs/API.md) | Referencia de endpoints y errores |
 | [docs/GUIA_DRIVE.md](./docs/GUIA_DRIVE.md) | Convenciones de carpetas y nombres de TR |
+| [docs/DESPLIEGUE.md](./docs/DESPLIEGUE.md) | Vercel + API (Render/Railway), CORS y variables |
 
 ---
 
