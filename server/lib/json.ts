@@ -85,11 +85,7 @@ function tryParseJsonSlice(slice: string): unknown {
   throw new Error(`JSON inválido del modelo: ${hint}${snip ? ` …fragmento: «${snip}»` : ''}`)
 }
 
-/** Extrae el primer objeto JSON de una respuesta de modelo (con o sin fence ```). */
-export function extractJsonObject(text: string): unknown {
-  const trimmed = text.trim()
-  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  const candidate = fence ? fence[1]!.trim() : trimmed
+function parseJsonObjectFromCandidate(candidate: string): unknown {
   const start = candidate.indexOf('{')
   if (start === -1) {
     throw new Error('La respuesta del modelo no contiene un objeto JSON reconocible.')
@@ -100,6 +96,31 @@ export function extractJsonObject(text: string): unknown {
       'JSON del modelo incompleto o llaves desbalanceadas (¿respuesta cortada por max_tokens?).',
     )
   }
-  const slice = candidate.slice(start, end + 1)
-  return tryParseJsonSlice(slice)
+  return tryParseJsonSlice(candidate.slice(start, end + 1))
+}
+
+/** Extrae el primer objeto JSON de una respuesta de modelo (con o sin fence ```). */
+export function extractJsonObject(text: string): unknown {
+  const trimmed = text.trim()
+  const candidates: string[] = []
+  const fences = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)]
+  for (const m of fences) {
+    const inner = m[1]?.trim()
+    if (inner) candidates.push(inner)
+  }
+  candidates.push(trimmed)
+  const braceIdx = trimmed.indexOf('{')
+  if (braceIdx >= 0) candidates.push(trimmed.slice(braceIdx))
+
+  let lastErr: unknown
+  for (const candidate of candidates) {
+    try {
+      return parseJsonObjectFromCandidate(candidate)
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error('La respuesta del modelo no contiene un objeto JSON reconocible.')
 }

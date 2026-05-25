@@ -41,6 +41,20 @@ function fetchFailedMessage(cause?: unknown): string {
   return lines.join(' ')
 }
 
+export class ApiError extends Error {
+  status: number
+  code?: string
+  payload?: unknown
+
+  constructor(message: string, status: number, code?: string, payload?: unknown) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+    this.payload = payload
+  }
+}
+
 export async function apiJson<T>(
   path: string,
   token: string,
@@ -73,11 +87,15 @@ export async function apiJson<T>(
     throw new Error(`Respuesta no JSON (${res.status}): ${text.slice(0, 200)}`)
   }
   if (!res.ok) {
-    const err = data as { error?: { message?: string; code?: string } }
+    const err = data as {
+      error?: { message?: string; code?: string }
+      preguntas?: unknown
+      confianza_pct?: number
+    }
     const msg =
       err?.error?.message ??
       (typeof data === 'object' && data && 'message' in data ? String((data as { message: unknown }).message) : null)
-    throw new Error(msg ?? `Error HTTP ${res.status}`)
+    throw new ApiError(msg ?? `Error HTTP ${res.status}`, res.status, err?.error?.code, data)
   }
   return data as T
 }
@@ -93,6 +111,12 @@ export async function apiPdfBlob(path: string, token: string): Promise<Blob> {
   }
   if (!res.ok) {
     const t = await res.text()
+    try {
+      const j = JSON.parse(t) as { error?: { message?: string } }
+      if (j?.error?.message) throw new Error(j.error.message)
+    } catch (e) {
+      if (e instanceof Error && e.message !== t.slice(0, 300)) throw e
+    }
     throw new Error(t.slice(0, 300) || `Error ${res.status}`)
   }
   return res.blob()

@@ -11,7 +11,7 @@ export type ProveedorExtraccionCache = {
 
 export type AnalisisIaCacheRow = {
   folder_id: string
-  terminos_file_id: string
+  terminos_file_id: string | null
   criterios: CriterioRow[]
   documentos_requeridos: RequisitoDocumentoTr[]
   proveedores_extracciones: ProveedorExtraccionCache[]
@@ -24,9 +24,12 @@ function sha(s: string) {
   return createHash('sha256').update(s).digest('hex')
 }
 
+/** Sube la versión al cambiar prompts de extracción/clasificación (invalida caché sin tocar Drive). */
+const IA_LOGIC_VERSION = '2025-05-tr-homogeneo-resumen'
+
 /** Huella de los PDF por carpeta de proveedor (ids ordenados). */
 export function fingerprintPdfIds(pdfIds: string[]): string {
-  return sha([...new Set(pdfIds)].sort().join(','))
+  return sha(`${IA_LOGIC_VERSION}|${[...new Set(pdfIds)].sort().join(',')}`)
 }
 
 /** Huella de la lista de requisitos documentales del TR (ids estables). */
@@ -53,7 +56,7 @@ export function fingerprintDrivePorServicio(
       .join(',')
     return `${folder.id}:${ids}`
   })
-  return sha(parts.join('|'))
+  return sha(`${IA_LOGIC_VERSION}|${parts.join('|')}`)
 }
 
 export async function loadAnalisisIaCache(folderId: string): Promise<AnalisisIaCacheRow | null> {
@@ -78,7 +81,7 @@ export async function loadAnalisisIaCache(folderId: string): Promise<AnalisisIaC
 
 export async function saveAnalisisIaCache(payload: {
   folder_id: string
-  terminos_file_id: string
+  terminos_file_id: string | null
   criterios: CriterioRow[]
   documentos_requeridos: RequisitoDocumentoTr[]
   proveedores_extracciones: ProveedorExtraccionCache[]

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type SVGProps } from 'react'
-import { apiJson, apiPdfBlob } from './api'
+import { ApiError, apiJson, apiPdfBlob } from './api'
 import { supabase } from './lib/supabase'
 import { PageChrome } from './PageChrome'
 import './index.css'
@@ -18,6 +18,24 @@ type AnalisisRecienteRow = {
   anio: number
   created_at: string
   top_3?: unknown
+}
+
+type FuenteTerminos = 'drive' | 'texto' | 'manual'
+
+type CriterioManual = {
+  nombre: string
+  descripcion: string
+  peso: number
+  tipo: 'economico' | 'tecnico' | 'experiencia' | 'juridico'
+  unidad: string
+}
+
+const CRITERIO_VACIO: CriterioManual = {
+  nombre: '',
+  descripcion: '',
+  peso: 0,
+  tipo: 'tecnico',
+  unidad: '',
 }
 
 function normalizeName(n: string) {
@@ -81,15 +99,47 @@ function driveFileUrl(fileId: string) {
   return `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`
 }
 
+type ResumenCriterioFila = {
+  criterio: string
+  peso_pct: number
+  medicion_tr: string
+  valor_ofertado: string
+  confianza_extraccion?: string | null
+  subpuntaje_10: number
+  hallazgo: string
+}
+
+type ResumenProveedorVista = {
+  proveedor: string
+  puntaje_global?: number | null
+  veredicto: string
+  por_criterio: ResumenCriterioFila[]
+}
+
+type ResumenEjecutivoVista = {
+  sintesis_global: string
+  proveedores: ResumenProveedorVista[]
+}
+
 type AnalisisCriterioVista = {
   criterio: string
+  medicion_tr?: string
+  peso_pct?: number
+  tipo_criterio?: string
   cobertura_tr: string
   condiciones_tr: string
   especificidad?: string
-  proveedores: { proveedor: string; puntaje_criterio: number; bullets: string[] }[]
+  proveedores: {
+    proveedor: string
+    puntaje_criterio: number
+    valor_ofertado?: string
+    confianza_extraccion?: string | null
+    bullets: string[]
+  }[]
 }
 
 type ExtendidoVista = {
+  resumen_ejecutivo?: ResumenEjecutivoVista
   analisis_criterios: AnalisisCriterioVista[]
   financiero: {
     resumen: string
@@ -202,6 +252,7 @@ export default function App() {
   const [pdfTitle, setPdfTitle] = useState<string | null>(null)
 
   const [compararLoading, setCompararLoading] = useState(false)
+  const [informePdfLoading, setInformePdfLoading] = useState(false)
   const [compararError, setCompararError] = useState<string | null>(null)
   const [compararResult, setCompararResult] = useState<Record<string, unknown> | null>(null)
   /** Fila completa desde GET /analisis/:id (historial). Si existe, el panel derecho prioriza esto sobre el último comparar. */
@@ -215,6 +266,23 @@ export default function App() {
   >([])
   const [terminosEncontrado, setTerminosEncontrado] = useState<{ id: string; name: string } | null>(null)
   const [terminosCheckLoading, setTerminosCheckLoading] = useState(false)
+  const [terminosCheckError, setTerminosCheckError] = useState<string | null>(null)
+
+  const [fuenteTerminos, setFuenteTerminos] = useState<FuenteTerminos>('drive')
+  const [terminosTexto, setTerminosTexto] = useState('')
+  const [criteriosManual, setCriteriosManual] = useState<CriterioManual[]>([
+    { ...CRITERIO_VACIO },
+    { ...CRITERIO_VACIO, tipo: 'economico', unidad: 'COP/mes' },
+  ])
+  const [criteriosExtraidos, setCriteriosExtraidos] = useState<CriterioManual[]>([])
+  const [extraerCriteriosLoading, setExtraerCriteriosLoading] = useState(false)
+  const [configTrOpen, setConfigTrOpen] = useState(false)
+  const [clarificacionOpen, setClarificacionOpen] = useState(false)
+  const [clarificacionPreguntas, setClarificacionPreguntas] = useState<
+    { id: string; pregunta: string; contexto?: string }[]
+  >([])
+  const [clarificacionConfianza, setClarificacionConfianza] = useState<number | null>(null)
+  const [clarificacionRespuestas, setClarificacionRespuestas] = useState<Record<string, string>>({})
 
   const [analisisRecientes, setAnalisisRecientes] = useState<AnalisisRecienteRow[]>([])
   const [analisisRecientesLoading, setAnalisisRecientesLoading] = useState(false)
@@ -329,21 +397,45 @@ export default function App() {
   }, [pdfUrl])
 
   useEffect(() => {
-    if (!token || !currentParentId || folders.length === 0) {
+    setClarificacionOpen(false)
+    setClarificacionPreguntas([])
+    setClarificacionRespuestas({})
+    setClarificacionConfianza(null)
+    setCriteriosExtraidos([])
+    setTerminosTexto('')
+  }, [currentParentId])
+
+  useEffect(() => {
+    if (terminosEncontrado?.id) {
+      setFuenteTerminos('drive')
+    } else if (!terminosCheckLoading && currentParentId) {
+      setFuenteTerminos('texto')
+      setConfigTrOpen(true)
+    }
+  }, [terminosEncontrado?.id, terminosCheckLoading, currentParentId])
+
+  useEffect(() => {
+    if (!token || !currentParentId || (folders.length === 0 && files.length === 0)) {
       setTerminosEncontrado(null)
       return
     }
     let cancelled = false
     setTerminosCheckLoading(true)
-    void apiJson<{ data: { id: string; name: string } | null; error: { message?: string } | null }>(
+    setTerminosCheckError(null)
+    void apiJson<{ data: { id: string; name: string } | null; error: { message?: string; code?: string } | null }>(
       `/api/convocatorias-drive/terminos?folder_id=${encodeURIComponent(currentParentId)}`,
       token,
     )
       .then((res) => {
-        if (!cancelled) setTerminosEncontrado(res.data ?? null)
+        if (cancelled) return
+        setTerminosEncontrado(res.data ?? null)
+        setTerminosCheckError(res.error?.message ?? null)
       })
-      .catch(() => {
-        if (!cancelled) setTerminosEncontrado(null)
+      .catch((e) => {
+        if (!cancelled) {
+          setTerminosEncontrado(null)
+          setTerminosCheckError(e instanceof Error ? e.message : 'Error comprobando términos')
+        }
       })
       .finally(() => {
         if (!cancelled) setTerminosCheckLoading(false)
@@ -351,13 +443,23 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [token, currentParentId, folders.length])
+  }, [token, currentParentId, folders.length, files.length])
+
+  const layoutSoloPdfsEnServicio = folders.length === 0 && files.length > 0
+
+  const trConfigurado = useMemo(() => {
+    if (fuenteTerminos === 'drive') return Boolean(terminosEncontrado?.id)
+    if (fuenteTerminos === 'texto') {
+      return criteriosExtraidos.length >= 1 || terminosTexto.trim().length >= 80
+    }
+    return criteriosManual.filter((c) => c.nombre.trim()).length >= 2
+  }, [fuenteTerminos, terminosEncontrado, terminosTexto, criteriosExtraidos, criteriosManual])
 
   const puedeComparar = useMemo(() => {
     if (!currentParentId) return false
-    const hayProveedores = folders.length > 0
-    return hayProveedores && Boolean(terminosEncontrado?.id)
-  }, [currentParentId, folders.length, terminosEncontrado])
+    const hayProveedores = folders.length > 0 || files.length > 0
+    return hayProveedores && trConfigurado
+  }, [currentParentId, folders.length, files.length, trConfigurado])
 
   const filteredFolders = useMemo(() => {
     const q = asideFilter.trim()
@@ -483,16 +585,95 @@ export default function App() {
     setHistorialSelectedId(null)
   }
 
-  async function comparar() {
+  const analisisIdParaInforme = useMemo(() => {
+    if (analisisGuardado?.id && typeof analisisGuardado.id === 'string') return analisisGuardado.id
+    if (compararResult?.analisis_id && typeof compararResult.analisis_id === 'string') {
+      return compararResult.analisis_id
+    }
+    return null
+  }, [analisisGuardado, compararResult])
+
+  async function descargarInformePdf() {
+    if (!token || !analisisIdParaInforme) return
+    setInformePdfLoading(true)
+    setCompararError(null)
+    try {
+      const blob = await apiPdfBlob(
+        `/api/convocatorias-drive/analisis/${encodeURIComponent(analisisIdParaInforme)}/informe-pdf`,
+        token,
+      )
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `informe-comparativo-${analisisIdParaInforme.slice(0, 8)}.pdf`
+      a.rel = 'noopener'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setCompararError(e instanceof Error ? e.message : 'No se pudo generar el informe PDF')
+    } finally {
+      setInformePdfLoading(false)
+    }
+  }
+
+  function buildCompararBody(extraClarificaciones?: { id: string; pregunta?: string; respuesta: string }[]) {
+    const clarificaciones =
+      extraClarificaciones ??
+      clarificacionPreguntas
+        .map((p) => ({
+          id: p.id,
+          pregunta: p.pregunta,
+          respuesta: (clarificacionRespuestas[p.id] ?? '').trim(),
+        }))
+        .filter((c) => c.respuesta.length > 0)
+
+    return {
+      folder_id: currentParentId!,
+      fuente_terminos: fuenteTerminos,
+      terminos_texto: fuenteTerminos === 'texto' ? terminosTexto.trim() : undefined,
+      criterios_manual:
+        fuenteTerminos === 'manual'
+          ? criteriosManual.filter((c) => c.nombre.trim())
+          : undefined,
+      clarificaciones: clarificaciones.length > 0 ? clarificaciones : undefined,
+    }
+  }
+
+  async function extraerCriteriosDesdeTexto() {
+    if (!token || terminosTexto.trim().length < 80) return
+    setExtraerCriteriosLoading(true)
+    setCompararError(null)
+    try {
+      const res = await apiJson<{
+        criterios: CriterioManual[] | null
+        error: { message?: string } | null
+      }>(`/api/convocatorias-drive/extraer-criterios-texto`, token, {
+        method: 'POST',
+        body: JSON.stringify({ terminos_texto: terminosTexto.trim() }),
+      })
+      if (res.error?.message) throw new Error(res.error.message)
+      setCriteriosExtraidos(res.criterios ?? [])
+    } catch (e) {
+      setCompararError(e instanceof Error ? e.message : 'No se pudieron extraer criterios')
+    } finally {
+      setExtraerCriteriosLoading(false)
+    }
+  }
+
+  async function comparar(clarificacionesExtra?: { id: string; pregunta?: string; respuesta: string }[]) {
     if (!token || !currentParentId) return
     setCompararLoading(true)
     setCompararError(null)
-    setCompararResult(null)
+    if (!clarificacionesExtra) setCompararResult(null)
     try {
       const res = await apiJson<Record<string, unknown>>(`/api/convocatorias-drive/comparar`, token, {
         method: 'POST',
-        body: JSON.stringify({ folder_id: currentParentId }),
+        body: JSON.stringify(buildCompararBody(clarificacionesExtra)),
       })
+      setClarificacionOpen(false)
+      setClarificacionPreguntas([])
       setCompararResult(res)
       setCuadroTab('resumen')
       setAnalisisGuardado(null)
@@ -500,10 +681,37 @@ export default function App() {
       await loadHistorial()
       await loadAnalisisRecientes()
     } catch (e) {
+      if (e instanceof ApiError && e.code === 'NEEDS_CLARIFICATION') {
+        const payload = e.payload as {
+          preguntas?: { id: string; pregunta: string; contexto?: string }[]
+          confianza_pct?: number
+        }
+        setClarificacionPreguntas(payload.preguntas ?? [])
+        setClarificacionConfianza(
+          typeof payload.confianza_pct === 'number' ? payload.confianza_pct : null,
+        )
+        setClarificacionOpen(true)
+        setCompararError(null)
+        return
+      }
       setCompararError(e instanceof Error ? e.message : 'Error al comparar')
     } finally {
       setCompararLoading(false)
     }
+  }
+
+  function continuarCompararTrasClarificacion() {
+    const faltan = clarificacionPreguntas.some((p) => !(clarificacionRespuestas[p.id] ?? '').trim())
+    if (faltan) {
+      setCompararError('Responde todas las preguntas para continuar.')
+      return
+    }
+    const clar = clarificacionPreguntas.map((p) => ({
+      id: p.id,
+      pregunta: p.pregunta,
+      respuesta: clarificacionRespuestas[p.id]!.trim(),
+    }))
+    void comparar(clar)
   }
 
   const vista = analisisGuardado ?? compararResult
@@ -570,10 +778,50 @@ export default function App() {
       comparativo,
       analisis_propuesta_economica: String(finRaw.analisis_propuesta_economica ?? ''),
     }
-    if (ac.length === 0 && !financiero.resumen && comparativo.length === 0 && !financiero.analisis_propuesta_economica) {
+    let resumen_ejecutivo: ResumenEjecutivoVista | undefined
+    const reRaw = e.resumen_ejecutivo
+    if (reRaw && typeof reRaw === 'object') {
+      const re = reRaw as Record<string, unknown>
+      const provs = Array.isArray(re.proveedores) ? re.proveedores : []
+      resumen_ejecutivo = {
+        sintesis_global: String(re.sintesis_global ?? ''),
+        proveedores: provs.map((p) => {
+          const row = p as Record<string, unknown>
+          const por = Array.isArray(row.por_criterio) ? row.por_criterio : []
+          return {
+            proveedor: String(row.proveedor ?? ''),
+            puntaje_global:
+              typeof row.puntaje_global === 'number' && Number.isFinite(row.puntaje_global)
+                ? row.puntaje_global
+                : null,
+            veredicto: String(row.veredicto ?? ''),
+            por_criterio: por.map((c) => {
+              const cr = c as Record<string, unknown>
+              return {
+                criterio: String(cr.criterio ?? ''),
+                peso_pct: Number(cr.peso_pct) || 0,
+                medicion_tr: String(cr.medicion_tr ?? ''),
+                valor_ofertado: String(cr.valor_ofertado ?? '—'),
+                confianza_extraccion:
+                  typeof cr.confianza_extraccion === 'string' ? cr.confianza_extraccion : null,
+                subpuntaje_10: Number(cr.subpuntaje_10) || 0,
+                hallazgo: String(cr.hallazgo ?? ''),
+              }
+            }),
+          }
+        }),
+      }
+    }
+    if (
+      ac.length === 0 &&
+      !financiero.resumen &&
+      comparativo.length === 0 &&
+      !financiero.analisis_propuesta_economica &&
+      !resumen_ejecutivo?.sintesis_global
+    ) {
       return null
     }
-    return { analisis_criterios: ac, financiero }
+    return { resumen_ejecutivo, analisis_criterios: ac, financiero }
   }, [vista])
 
   const proveedoresDocCols = useMemo(() => {
@@ -711,7 +959,7 @@ export default function App() {
               </div>
               <div className="flex shrink-0 items-center gap-3">
                 {sessionEmail ? (
-                  <p className="hidden max-w-[12rem] truncate text-right font-mono text-xs font-medium text-slate-600 sm:block">
+                  <p className="hidden max-w-48 truncate text-right font-mono text-xs font-medium text-slate-600 sm:block">
                     {sessionEmail}
                   </p>
                 ) : null}
@@ -837,6 +1085,170 @@ export default function App() {
             ) : null}
 
             {currentParentId ? (
+              <section className="tr-config">
+                <button
+                  type="button"
+                  className="tr-config__toggle"
+                  onClick={() => setConfigTrOpen((v) => !v)}
+                >
+                  {configTrOpen ? '▾' : '▸'} Configurar evaluación (TR / criterios)
+                </button>
+                {configTrOpen ? (
+                  <div className="tr-config__body">
+                    <fieldset className="tr-config__fuentes">
+                      <legend>Fuente de términos</legend>
+                      <label>
+                        <input
+                          type="radio"
+                          name="fuente-tr"
+                          checked={fuenteTerminos === 'drive'}
+                          disabled={!terminosEncontrado?.id}
+                          onChange={() => setFuenteTerminos('drive')}
+                        />
+                        TR en Drive
+                        {terminosEncontrado ? ` (${terminosEncontrado.name})` : ''}
+                      </label>
+                      <label>
+                        <input
+                          type="radio"
+                          name="fuente-tr"
+                          checked={fuenteTerminos === 'texto'}
+                          onChange={() => setFuenteTerminos('texto')}
+                        />
+                        Pegar texto del TR
+                      </label>
+                      <label>
+                        <input
+                          type="radio"
+                          name="fuente-tr"
+                          checked={fuenteTerminos === 'manual'}
+                          onChange={() => setFuenteTerminos('manual')}
+                        />
+                        Criterios manuales
+                      </label>
+                    </fieldset>
+
+                    {fuenteTerminos === 'texto' ? (
+                      <>
+                        <label className="tr-config__label" htmlFor="terminos-texto">
+                          Texto de términos de referencia
+                        </label>
+                        <textarea
+                          id="terminos-texto"
+                          className="tr-config__textarea"
+                          rows={6}
+                          value={terminosTexto}
+                          placeholder="Pega aquí el TR completo o la matriz de evaluación (criterios, pesos, documentos exigidos)…"
+                          onChange={(e) => setTerminosTexto(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={extraerCriteriosLoading || terminosTexto.trim().length < 80}
+                          onClick={() => void extraerCriteriosDesdeTexto()}
+                        >
+                          {extraerCriteriosLoading ? 'Extrayendo criterios…' : 'Extraer criterios con IA'}
+                        </button>
+                        {criteriosExtraidos.length > 0 ? (
+                          <p className="hint muted">
+                            {criteriosExtraidos.length} criterio(s) detectados:{' '}
+                            {criteriosExtraidos.map((c) => c.nombre).join(', ')}
+                          </p>
+                        ) : null}
+                      </>
+                    ) : null}
+
+                    {fuenteTerminos === 'manual' ? (
+                      <div className="criterios-manual">
+                        <p className="hint muted">
+                          Define al menos 2 criterios con nombre, peso % y unidad (ej. COP/mes). Los pesos se
+                          normalizan a ~100%.
+                        </p>
+                        {criteriosManual.map((c, idx) => (
+                          <div key={idx} className="criterio-row">
+                            <input
+                              type="text"
+                              placeholder="Nombre del criterio"
+                              value={c.nombre}
+                              onChange={(e) => {
+                                const next = [...criteriosManual]
+                                next[idx] = { ...c, nombre: e.target.value }
+                                setCriteriosManual(next)
+                              }}
+                            />
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              placeholder="%"
+                              value={c.peso || ''}
+                              onChange={(e) => {
+                                const next = [...criteriosManual]
+                                next[idx] = { ...c, peso: Number(e.target.value) || 0 }
+                                setCriteriosManual(next)
+                              }}
+                            />
+                            <select
+                              value={c.tipo}
+                              onChange={(e) => {
+                                const next = [...criteriosManual]
+                                next[idx] = {
+                                  ...c,
+                                  tipo: e.target.value as CriterioManual['tipo'],
+                                }
+                                setCriteriosManual(next)
+                              }}
+                            >
+                              <option value="economico">Económico</option>
+                              <option value="tecnico">Técnico</option>
+                              <option value="experiencia">Experiencia</option>
+                              <option value="juridico">Jurídico</option>
+                            </select>
+                            <input
+                              type="text"
+                              placeholder="Unidad"
+                              value={c.unidad}
+                              onChange={(e) => {
+                                const next = [...criteriosManual]
+                                next[idx] = { ...c, unidad: e.target.value }
+                                setCriteriosManual(next)
+                              }}
+                            />
+                            <input
+                              type="text"
+                              className="criterio-row__desc"
+                              placeholder="Qué se evalúa"
+                              value={c.descripcion}
+                              onChange={(e) => {
+                                const next = [...criteriosManual]
+                                next[idx] = { ...c, descripcion: e.target.value }
+                                setCriteriosManual(next)
+                              }}
+                            />
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() =>
+                            setCriteriosManual([...criteriosManual, { ...CRITERIO_VACIO }])
+                          }
+                        >
+                          + Criterio
+                        </button>
+                      </div>
+                    ) : null}
+
+                    <p className="hint muted tr-config__flywheel">
+                      Flywheel Endir: las aclaraciones y correcciones que confirmes se guardan y mejoran
+                      comparaciones futuras del mismo servicio.
+                    </p>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            {currentParentId ? (
               <div className="actions">
                 <button
                   type="button"
@@ -859,17 +1271,28 @@ export default function App() {
                   </p>
                 ) : null}
                 {!puedeComparar ? (
-                  <p className="hint">
+                  <p className={`hint${terminosCheckError ? ' error' : ''}`}>
                     {terminosCheckLoading
-                      ? 'TR…'
-                      : folders.length === 0
-                        ? 'Falta subcarpeta proveedor'
-                        : 'Sin TR en carpeta central'}
+                      ? 'Comprobando TR…'
+                      : folders.length === 0 && files.length === 0
+                        ? 'Entra a la carpeta del servicio (subcarpetas de proveedores o PDFs sueltos).'
+                        : !trConfigurado
+                          ? 'Configura el TR: Drive, pega el texto o define criterios manuales (mín. 2).'
+                          : terminosCheckError
+                            ? terminosCheckError
+                            : 'Sin TR en carpeta central (PDF/Word: TR HSG + nombre del servicio).'}
                   </p>
-                ) : terminosEncontrado ? (
-                  <p className="hint muted" title={terminosEncontrado.name}>
-                    TR vinculado
-                  </p>
+                ) : fuenteTerminos === 'drive' && terminosEncontrado ? (
+                  <>
+                    <p className="hint muted" title={terminosEncontrado.name}>
+                      TR vinculado
+                    </p>
+                    {layoutSoloPdfsEnServicio ? (
+                      <p className="hint muted">
+                        {files.length} PDF en carpeta: cada archivo = un proveedor.
+                      </p>
+                    ) : null}
+                  </>
                 ) : null}
               </div>
             ) : null}
@@ -981,6 +1404,22 @@ export default function App() {
               )}
             </p>
 
+            {vista && analisisIdParaInforme ? (
+              <div className="informe-pdf-actions">
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={informePdfLoading || compararLoading}
+                  onClick={() => void descargarInformePdf()}
+                >
+                  {informePdfLoading ? 'Generando informe PDF…' : 'Descargar informe PDF (Top 3)'}
+                </button>
+                <p className="muted informe-pdf-actions__hint">
+                  Incluye resumen comparativo por criterios del TR y enlaces a las propuestas en Google Drive.
+                </p>
+              </div>
+            ) : null}
+
             <details className="docs-collapsible">
               <summary>PDF opcional · {pdfTitle ?? 'sin selección'}</summary>
               {pdfUrl ? (
@@ -1052,47 +1491,125 @@ export default function App() {
 
                 {cuadroTab === 'resumen' ? (
                   <>
-                    <h3>Top 3</h3>
-                    <table className="table">
-                      <thead>
-                        <tr>
-                          <th>Proveedor</th>
-                          <th>Puntaje</th>
-                          <th>Justificación</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {top3.map((t, i) => (
-                          <tr key={i}>
-                            <td>{t.proveedor}</td>
-                            <td>{t.puntaje}</td>
-                            <td className="wrap">{t.justificacion}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-
-                    {todasProps.length > 0 ? (
+                    {extendidoVista?.resumen_ejecutivo?.sintesis_global ? (
                       <>
-                        <h3>Propuestas</h3>
-                        <table className="table">
+                        <h3>Síntesis</h3>
+                        <p className="analisis-fin-resumen">{extendidoVista.resumen_ejecutivo.sintesis_global}</p>
+                      </>
+                    ) : null}
+
+                    {top3.length > 0 ? (
+                      <>
+                        <h3 style={{ marginTop: '1rem' }}>Ranking</h3>
+                        <table className="table table-compact">
                           <thead>
                             <tr>
+                              <th>#</th>
                               <th>Proveedor</th>
                               <th>Puntaje</th>
-                              <th>Justificación</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {todasProps.map((p, i) => (
+                            {top3.map((t, i) => (
                               <tr key={i}>
-                                <td>{p.proveedor}</td>
-                                <td>{p.puntaje}</td>
-                                <td className="wrap">{p.justificacion}</td>
+                                <td>{i + 1}</td>
+                                <td>{t.proveedor}</td>
+                                <td>{t.puntaje}</td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
+                      </>
+                    ) : null}
+
+                    {extendidoVista?.resumen_ejecutivo?.proveedores?.length ? (
+                      <>
+                        <h3 style={{ marginTop: '1.25rem' }}>Por proveedor (criterios del TR)</h3>
+                        <p className="muted" style={{ fontSize: 'var(--text-xs)', marginBottom: '0.75rem' }}>
+                          Misma base que «Análisis general»: medición según TR, valor extraído, confianza y hallazgo por
+                          criterio.
+                        </p>
+                        <div className="resumen-proveedores-stack">
+                          {extendidoVista.resumen_ejecutivo.proveedores.map((pr) => {
+                            const puntajeTabla = todasProps.find(
+                              (p) =>
+                                p.proveedor === pr.proveedor ||
+                                (p.proveedor &&
+                                  pr.proveedor &&
+                                  p.proveedor.toLowerCase() === pr.proveedor.toLowerCase()),
+                            )?.puntaje
+                            const puntaje =
+                              pr.puntaje_global ?? (typeof puntajeTabla === 'number' ? puntajeTabla : null)
+                            return (
+                              <article key={pr.proveedor} className="resumen-proveedor-card">
+                                <header className="resumen-proveedor-card__head">
+                                  <h4>{pr.proveedor}</h4>
+                                  {puntaje != null ? (
+                                    <span className="resumen-proveedor-card__score">Puntaje global: {puntaje}</span>
+                                  ) : null}
+                                </header>
+                                {pr.veredicto ? <p className="resumen-proveedor-card__veredicto">{pr.veredicto}</p> : null}
+                                {pr.por_criterio.length > 0 ? (
+                                  <div className="cuadro-table-scroll">
+                                    <table className="table table-compact resumen-criterios-table">
+                                      <thead>
+                                        <tr>
+                                          <th>Criterio</th>
+                                          <th>Peso</th>
+                                          <th>Medición (TR)</th>
+                                          <th>Ofertado</th>
+                                          <th>Conf.</th>
+                                          <th>/10</th>
+                                          <th>Hallazgo</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {pr.por_criterio.map((c, ci) => (
+                                          <tr key={ci}>
+                                            <td>{c.criterio}</td>
+                                            <td>{c.peso_pct}%</td>
+                                            <td className="wrap muted">{c.medicion_tr}</td>
+                                            <td className="wrap">{c.valor_ofertado}</td>
+                                            <td>
+                                              {c.confianza_extraccion && isConfianza(c.confianza_extraccion) ? (
+                                                <span className={`badge-conf ${c.confianza_extraccion}`}>
+                                                  {c.confianza_extraccion}
+                                                </span>
+                                              ) : (
+                                                '—'
+                                              )}
+                                            </td>
+                                            <td>{c.subpuntaje_10}</td>
+                                            <td className="wrap">{c.hallazgo}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                ) : null}
+                              </article>
+                            )
+                          })}
+                        </div>
+                      </>
+                    ) : todasProps.length > 0 ? (
+                      <>
+                        <h3 style={{ marginTop: '1rem' }}>Justificación por proveedor</h3>
+                        <p className="muted" style={{ fontSize: 'var(--text-xs)', marginBottom: '0.65rem' }}>
+                          Análisis anterior sin resumen ejecutivo unificado. Ejecuta «Comparar» de nuevo para el detalle por
+                          criterio del TR.
+                        </p>
+                        {todasProps.map((p, i) => (
+                          <div key={i} className="extraccion-block">
+                            <h4>
+                              {p.proveedor}
+                              {typeof p.puntaje === 'number' ? ` — ${p.puntaje}` : ''}
+                            </h4>
+                            <p className="wrap muted" style={{ margin: 0, fontSize: 'var(--text-sm)' }}>
+                              {p.justificacion || 'Sin justificación.'}
+                            </p>
+                          </div>
+                        ))}
                       </>
                     ) : null}
                   </>
@@ -1101,17 +1618,30 @@ export default function App() {
                 {cuadroTab === 'general' ? (
                   extendidoVista ? (
                     <>
-                      <h3>Evaluación por criterio</h3>
+                      <h3>Evaluación por criterio del TR</h3>
                       <p className="muted" style={{ fontSize: 'var(--text-xs)', marginBottom: '0.85rem' }}>
-                        Cobertura y condiciones según el TR; por cada proveedor, subpuntaje (0–10) y viñetas de
-                        especificidad y cumplimiento.
+                        Solo los criterios definidos en los Términos de Referencia. Cada proveedor se evalúa con la
+                        medición del TR, el valor extraído de su propuesta y la confianza de lectura.
                       </p>
                       <div className="analisis-criterios-stack">
                         {extendidoVista.analisis_criterios.map((bl, idx) => (
                           <article key={`${bl.criterio}-${idx}`} className="analisis-criterio-card">
                             <header className="analisis-criterio-card__head">
                               <h4 className="analisis-criterio-card__title">{bl.criterio}</h4>
+                              <div className="analisis-criterio-card__meta">
+                                {bl.peso_pct != null ? (
+                                  <span className="badge">Peso {bl.peso_pct}%</span>
+                                ) : null}
+                                {bl.tipo_criterio ? (
+                                  <span className="badge">{bl.tipo_criterio}</span>
+                                ) : null}
+                              </div>
                             </header>
+                            {bl.medicion_tr ? (
+                              <p className="analisis-criterio-card__medicion">
+                                <strong>Criterio de medición (TR):</strong> {bl.medicion_tr}
+                              </p>
+                            ) : null}
                             <div className="analisis-criterio-card__tr">
                               <p>
                                 <strong>Cobertura (TR)</strong>
@@ -1136,9 +1666,20 @@ export default function App() {
                                   <div className="analisis-criterio-proveedor__head">
                                     <span className="analisis-criterio-proveedor__name">{pr.proveedor}</span>
                                     <span className="analisis-criterio-proveedor__score">
-                                      Puntaje criterio: <strong>{pr.puntaje_criterio}</strong> / 10
+                                      Subpuntaje: <strong>{pr.puntaje_criterio}</strong> / 10
                                     </span>
                                   </div>
+                                  <p className="analisis-criterio-proveedor__oferta muted" style={{ fontSize: 'var(--text-xs)' }}>
+                                    <strong>Ofertado:</strong> {pr.valor_ofertado ?? '—'}
+                                    {pr.confianza_extraccion && isConfianza(pr.confianza_extraccion) ? (
+                                      <>
+                                        {' '}
+                                        <span className={`badge-conf ${pr.confianza_extraccion}`}>
+                                          conf. extracción {pr.confianza_extraccion}
+                                        </span>
+                                      </>
+                                    ) : null}
+                                  </p>
                                   <ul className="analisis-bullets">
                                     {pr.bullets.map((b, bi) => (
                                       <li key={bi}>{b}</li>
@@ -1353,6 +1894,11 @@ export default function App() {
                                       ) : (
                                         <span className="muted">—</span>
                                       )}
+                                      {c?.nota ? (
+                                        <p className="muted table-doc-matrix__nota" style={{ margin: '0.25rem 0 0', fontSize: 'var(--text-xs)' }}>
+                                          {c.nota}
+                                        </p>
+                                      ) : null}
                                       {c?.confianza && isConfianza(c.confianza) ? (
                                         <span
                                           className={`doc-conf doc-conf--${c.confianza}`}
@@ -1423,6 +1969,51 @@ export default function App() {
             </div>
           </main>
       </div>
+
+      {clarificacionOpen ? (
+        <div className="clarificacion-overlay" role="dialog" aria-modal="true" aria-labelledby="clarif-title">
+          <div className="clarificacion-panel">
+            <h2 id="clarif-title">Aclaraciones antes de comparar</h2>
+            <p className="hint muted">
+              Confianza actual:{' '}
+              {clarificacionConfianza != null ? `${clarificacionConfianza}%` : '—'} (necesitamos ≥ 90%)
+            </p>
+            <p>
+              No asumimos datos ambiguos. Responde con precisión; si hace falta, volveremos a preguntar hasta
+              alcanzar confianza suficiente.
+            </p>
+            <ul className="clarificacion-list">
+              {clarificacionPreguntas.map((p) => (
+                <li key={p.id}>
+                  <label htmlFor={`clar-${p.id}`}>{p.pregunta}</label>
+                  {p.contexto ? <p className="hint muted">{p.contexto}</p> : null}
+                  <textarea
+                    id={`clar-${p.id}`}
+                    rows={2}
+                    value={clarificacionRespuestas[p.id] ?? ''}
+                    onChange={(e) =>
+                      setClarificacionRespuestas((prev) => ({ ...prev, [p.id]: e.target.value }))
+                    }
+                  />
+                </li>
+              ))}
+            </ul>
+            <div className="clarificacion-actions">
+              <button type="button" className="secondary" onClick={() => setClarificacionOpen(false)}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={compararLoading}
+                onClick={() => continuarCompararTrasClarificacion()}
+              >
+                {compararLoading ? 'Comparando…' : 'Continuar comparación'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </PageChrome>
   )
 }
