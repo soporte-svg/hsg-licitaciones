@@ -24,8 +24,8 @@ Raíz (ROOT)
     └── ...
 ```
 
-- **Comparar** solo funciona en una carpeta que tenga **al menos una subcarpeta** (proveedores).
-- Los PDFs dentro de cada subcarpeta son las propuestas analizadas.
+- **Comparar** funciona si hay **subcarpetas de proveedores** *o* **PDFs sueltos** en la carpeta del servicio (un PDF = un proveedor, p. ej. TUBERIA).
+- Los PDFs dentro de cada subcarpeta (o cada PDF suelto) son las propuestas analizadas.
 
 ## Nomenclatura de Términos de Referencia
 
@@ -54,7 +54,7 @@ El algoritmo (`findTerminosFileForServiceFolder`):
 | Regla | Detalle |
 |-------|---------|
 | Formato | Solo PDF en la extracción automática |
-| Límite por proveedor | `COMPARAR_MAX_PDFS_PER_PROVEEDOR` (default 4) |
+| Límite por proveedor | `COMPARAR_MAX_PDFS_PER_PROVEEDOR` (default 6) |
 | Tamaño máximo | `COMPARAR_MAX_PDF_BYTES` (default 4 MB) |
 
 PDFs más grandes o excedentes del límite se omiten (ver log `[comparar]`).

@@ -284,6 +284,12 @@ export default function App() {
   const [clarificacionConfianza, setClarificacionConfianza] = useState<number | null>(null)
   const [clarificacionRespuestas, setClarificacionRespuestas] = useState<Record<string, string>>({})
 
+  const [flywheelOpen, setFlywheelOpen] = useState(false)
+  const [flywheelRating, setFlywheelRating] = useState<number>(0)
+  const [flywheelObs, setFlywheelObs] = useState('')
+  const [flywheelSaving, setFlywheelSaving] = useState(false)
+  const [flywheelSavedMsg, setFlywheelSavedMsg] = useState<string | null>(null)
+
   const [analisisRecientes, setAnalisisRecientes] = useState<AnalisisRecienteRow[]>([])
   const [analisisRecientesLoading, setAnalisisRecientesLoading] = useState(false)
 
@@ -292,6 +298,14 @@ export default function App() {
   useEffect(() => {
     setCuadroTab('resumen')
   }, [historialSelectedId])
+
+  useEffect(() => {
+    setFlywheelOpen(false)
+    setFlywheelRating(0)
+    setFlywheelObs('')
+    setFlywheelSaving(false)
+    setFlywheelSavedMsg(null)
+  }, [analisisGuardado, compararResult, historialSelectedId])
 
   const token = session?.access_token ?? ''
 
@@ -854,6 +868,90 @@ export default function App() {
     const rest = [...s].filter((p) => !ordered.includes(p))
     return [...ordered, ...rest.sort((a, b) => a.localeCompare(b))]
   }, [extendidoVista, proveedoresDocCols, todasProps])
+
+  const proveedoresEvalCols = useMemo(() => {
+    if (!extendidoVista) return []
+    const s = new Set<string>()
+    for (const c of extendidoVista.analisis_criterios) {
+      for (const pr of c.proveedores ?? []) {
+        if (pr?.proveedor) s.add(String(pr.proveedor))
+      }
+    }
+    const base =
+      proveedoresDocCols.length > 0
+        ? proveedoresDocCols
+        : (todasProps.map((p) => p.proveedor).filter((x): x is string => Boolean(x)) as string[])
+    const ordered = base.filter((p) => s.has(p))
+    const rest = [...s].filter((p) => !ordered.includes(p))
+    return [...ordered, ...rest.sort((a, b) => a.localeCompare(b))]
+  }, [extendidoVista, proveedoresDocCols, todasProps])
+
+  const evalLookup = useMemo(() => {
+    const m = new Map<
+      string,
+      {
+        puntaje_criterio?: number
+        valor_ofertado?: string
+        confianza_extraccion?: string
+        bullets?: string[]
+      }
+    >()
+    for (const c of extendidoVista?.analisis_criterios ?? []) {
+      const crit = String(c.criterio ?? '')
+      if (!crit) continue
+      for (const pr of c.proveedores ?? []) {
+        const prov = String((pr as { proveedor?: unknown }).proveedor ?? '')
+        if (!prov) continue
+        const row = pr as Record<string, unknown>
+        m.set(`${crit}\0${prov}`, {
+          puntaje_criterio: typeof row.puntaje_criterio === 'number' ? row.puntaje_criterio : undefined,
+          valor_ofertado: typeof row.valor_ofertado === 'string' ? row.valor_ofertado : undefined,
+          confianza_extraccion:
+            typeof row.confianza_extraccion === 'string' ? row.confianza_extraccion : undefined,
+          bullets: Array.isArray(row.bullets) ? (row.bullets as string[]) : undefined,
+        })
+      }
+    }
+    return m
+  }, [extendidoVista])
+
+  const resumenLookup = useMemo(() => {
+    const provs = extendidoVista?.resumen_ejecutivo?.proveedores ?? []
+    const proveedores = provs.map((p) => p.proveedor).filter((x) => x.trim())
+    const criteriosSet = new Set<string>()
+    const m = new Map<
+      string,
+      {
+        subpuntaje_10?: number
+        valor_ofertado?: string
+        confianza_extraccion?: string | null
+        hallazgo?: string
+        medicion_tr?: string
+        peso_pct?: number
+      }
+    >()
+    for (const p of provs) {
+      const prov = p.proveedor
+      for (const c of p.por_criterio ?? []) {
+        const crit = c.criterio
+        if (!prov || !crit) continue
+        criteriosSet.add(crit)
+        m.set(`${crit}\0${prov}`, {
+          subpuntaje_10: typeof c.subpuntaje_10 === 'number' ? c.subpuntaje_10 : undefined,
+          valor_ofertado: c.valor_ofertado,
+          confianza_extraccion: c.confianza_extraccion,
+          hallazgo: c.hallazgo,
+          medicion_tr: c.medicion_tr,
+          peso_pct: c.peso_pct,
+        })
+      }
+    }
+    const criteriosRows = criterios
+      .map((c) => String((c as { nombre?: unknown }).nombre ?? ''))
+      .filter((x) => x && criteriosSet.has(x))
+    const rest = [...criteriosSet].filter((x) => !criteriosRows.includes(x))
+    return { proveedores, criterios: [...criteriosRows, ...rest.sort((a, b) => a.localeCompare(b))], m }
+  }, [extendidoVista, criterios])
 
   if (authLoading) {
     return (
@@ -1420,6 +1518,104 @@ export default function App() {
               </div>
             ) : null}
 
+            {vista ? (
+              <section className="flywheel-card">
+                <button
+                  type="button"
+                  className="flywheel-card__toggle"
+                  onClick={() => setFlywheelOpen((v) => !v)}
+                >
+                  {flywheelOpen ? '▾' : '▸'} Calificar análisis / dejar observación (mejora continua)
+                </button>
+                {flywheelOpen ? (
+                  <div className="flywheel-card__body">
+                    <div className="flywheel-rating">
+                      <span className="muted" style={{ fontSize: 'var(--text-xs)' }}>
+                        Calificación (1–5)
+                      </span>
+                      <div className="flywheel-rating__buttons" role="radiogroup" aria-label="Calificación Endir">
+                        {[1, 2, 3, 4, 5].map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            className="flywheel-rating__btn"
+                            data-active={flywheelRating === n}
+                            onClick={() => setFlywheelRating(n)}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <label className="flywheel-label" htmlFor="flywheel-obs">
+                      Observación (qué estuvo bien / qué corregir)
+                    </label>
+                    <textarea
+                      id="flywheel-obs"
+                      className="flywheel-textarea"
+                      rows={3}
+                      value={flywheelObs}
+                      placeholder="Ej: El precio de Proveedor A es mensual y el de Proveedor B es total contrato; separar. O: En el criterio Experiencia faltó citar el valor ofertado."
+                      onChange={(e) => setFlywheelObs(e.target.value)}
+                    />
+
+                    <div className="flywheel-actions">
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={flywheelSaving}
+                        onClick={() => {
+                          setFlywheelRating(0)
+                          setFlywheelObs('')
+                          setFlywheelSavedMsg(null)
+                        }}
+                      >
+                        Limpiar
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost"
+                        disabled={flywheelSaving || (flywheelRating < 1 && flywheelObs.trim().length < 6)}
+                        onClick={async () => {
+                          if (!token) return
+                          setFlywheelSaving(true)
+                          setFlywheelSavedMsg(null)
+                          try {
+                            const payload = {
+                              folder_id: String((vista as { folder_id?: unknown }).folder_id ?? currentParentId ?? ''),
+                              servicio: String((vista as { servicio?: unknown }).servicio ?? ''),
+                              conjunto: String((vista as { conjunto?: unknown }).conjunto ?? ''),
+                              tipo: 'calificacion_analisis',
+                              calificacion_endir: flywheelRating >= 1 ? flywheelRating : undefined,
+                              payload: {
+                                analisis_id: String((vista as { id?: unknown }).id ?? ''),
+                                observacion: flywheelObs.trim(),
+                                fuente: 'ui',
+                              },
+                            }
+                            await apiJson<{ ok: boolean }>(`/api/convocatorias-drive/flywheel`, token, {
+                              method: 'POST',
+                              body: JSON.stringify(payload),
+                            })
+                            setFlywheelSavedMsg('Guardado. Se usará como aprendizaje en próximas comparaciones.')
+                          } catch (e) {
+                            setFlywheelSavedMsg(e instanceof Error ? e.message : 'No se pudo guardar el feedback.')
+                          } finally {
+                            setFlywheelSaving(false)
+                          }
+                        }}
+                      >
+                        {flywheelSaving ? 'Guardando…' : 'Guardar feedback'}
+                      </button>
+                    </div>
+
+                    {flywheelSavedMsg ? <p className="hint muted">{flywheelSavedMsg}</p> : null}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
             <details className="docs-collapsible">
               <summary>PDF opcional · {pdfTitle ?? 'sin selección'}</summary>
               {pdfUrl ? (
@@ -1623,74 +1819,141 @@ export default function App() {
                         Solo los criterios definidos en los Términos de Referencia. Cada proveedor se evalúa con la
                         medición del TR, el valor extraído de su propuesta y la confianza de lectura.
                       </p>
-                      <div className="analisis-criterios-stack">
-                        {extendidoVista.analisis_criterios.map((bl, idx) => (
-                          <article key={`${bl.criterio}-${idx}`} className="analisis-criterio-card">
-                            <header className="analisis-criterio-card__head">
-                              <h4 className="analisis-criterio-card__title">{bl.criterio}</h4>
-                              <div className="analisis-criterio-card__meta">
-                                {bl.peso_pct != null ? (
-                                  <span className="badge">Peso {bl.peso_pct}%</span>
-                                ) : null}
-                                {bl.tipo_criterio ? (
-                                  <span className="badge">{bl.tipo_criterio}</span>
+
+                      {extendidoVista.analisis_criterios.length > 0 && proveedoresEvalCols.length > 0 ? (
+                        <div className="cuadro-table-scroll">
+                          <table className="table table-doc-matrix table-eval-matrix">
+                            <thead>
+                              <tr>
+                                <th className="table-doc-matrix__req">Criterio (TR)</th>
+                                {proveedoresEvalCols.map((prov) => (
+                                  <th key={prov} className="table-doc-matrix__prov">
+                                    {prov}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {extendidoVista.analisis_criterios.map((bl, idx) => (
+                                <tr key={`${bl.criterio}-${idx}`}>
+                                  <td className="table-doc-matrix__req">
+                                    <strong>{bl.criterio}</strong>
+                                    <div className="table-eval-crit-meta">
+                                      {bl.peso_pct != null ? <span className="badge">Peso {bl.peso_pct}%</span> : null}
+                                      {bl.tipo_criterio ? <span className="badge">{bl.tipo_criterio}</span> : null}
+                                    </div>
+                                    {bl.medicion_tr ? (
+                                      <p className="muted table-doc-matrix__desc">{bl.medicion_tr}</p>
+                                    ) : null}
+                                  </td>
+                                  {proveedoresEvalCols.map((prov) => {
+                                    const c = evalLookup.get(`${bl.criterio}\0${prov}`)
+                                    const conf = c?.confianza_extraccion
+                                    const bullets = (c?.bullets ?? []).slice(0, 4)
+                                    return (
+                                      <td key={prov} className="wrap table-doc-matrix__cell table-eval-cell">
+                                        {typeof c?.puntaje_criterio === 'number' ? (
+                                          <div className="table-eval-score">
+                                            <strong>{c.puntaje_criterio}</strong> / 10
+                                          </div>
+                                        ) : (
+                                          <div className="table-eval-score muted">—</div>
+                                        )}
+                                        {c?.valor_ofertado ? (
+                                          <div className="table-eval-oferta">
+                                            <span className="muted">Ofertado:</span> {c.valor_ofertado}
+                                          </div>
+                                        ) : null}
+                                        {conf && isConfianza(conf) ? (
+                                          <span className={`badge-conf ${conf}`}>conf. {conf}</span>
+                                        ) : null}
+                                        {bullets.length > 0 ? (
+                                          <ul className="table-eval-bullets">
+                                            {bullets.map((b, bi) => (
+                                              <li key={bi}>{b}</li>
+                                            ))}
+                                          </ul>
+                                        ) : null}
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
+
+                      <details className="docs-collapsible" style={{ marginTop: '1rem' }}>
+                        <summary>Ver detalle completo por criterio</summary>
+                        <div className="analisis-criterios-stack">
+                          {extendidoVista.analisis_criterios.map((bl, idx) => (
+                            <article key={`${bl.criterio}-${idx}`} className="analisis-criterio-card">
+                              <header className="analisis-criterio-card__head">
+                                <h4 className="analisis-criterio-card__title">{bl.criterio}</h4>
+                                <div className="analisis-criterio-card__meta">
+                                  {bl.peso_pct != null ? <span className="badge">Peso {bl.peso_pct}%</span> : null}
+                                  {bl.tipo_criterio ? <span className="badge">{bl.tipo_criterio}</span> : null}
+                                </div>
+                              </header>
+                              {bl.medicion_tr ? (
+                                <p className="analisis-criterio-card__medicion">
+                                  <strong>Criterio de medición (TR):</strong> {bl.medicion_tr}
+                                </p>
+                              ) : null}
+                              <div className="analisis-criterio-card__tr">
+                                <p>
+                                  <strong>Cobertura (TR)</strong>
+                                </p>
+                                <p className="muted analisis-criterio-card__text">{bl.cobertura_tr}</p>
+                                <p>
+                                  <strong>Condiciones (TR)</strong>
+                                </p>
+                                <p className="muted analisis-criterio-card__text">{bl.condiciones_tr}</p>
+                                {bl.especificidad ? (
+                                  <>
+                                    <p>
+                                      <strong>Especificidad</strong>
+                                    </p>
+                                    <p className="muted analisis-criterio-card__text">{bl.especificidad}</p>
+                                  </>
                                 ) : null}
                               </div>
-                            </header>
-                            {bl.medicion_tr ? (
-                              <p className="analisis-criterio-card__medicion">
-                                <strong>Criterio de medición (TR):</strong> {bl.medicion_tr}
-                              </p>
-                            ) : null}
-                            <div className="analisis-criterio-card__tr">
-                              <p>
-                                <strong>Cobertura (TR)</strong>
-                              </p>
-                              <p className="muted analisis-criterio-card__text">{bl.cobertura_tr}</p>
-                              <p>
-                                <strong>Condiciones (TR)</strong>
-                              </p>
-                              <p className="muted analisis-criterio-card__text">{bl.condiciones_tr}</p>
-                              {bl.especificidad ? (
-                                <>
-                                  <p>
-                                    <strong>Especificidad</strong>
-                                  </p>
-                                  <p className="muted analisis-criterio-card__text">{bl.especificidad}</p>
-                                </>
-                              ) : null}
-                            </div>
-                            <ul className="analisis-criterio-proveedores">
-                              {bl.proveedores.map((pr) => (
-                                <li key={pr.proveedor} className="analisis-criterio-proveedor">
-                                  <div className="analisis-criterio-proveedor__head">
-                                    <span className="analisis-criterio-proveedor__name">{pr.proveedor}</span>
-                                    <span className="analisis-criterio-proveedor__score">
-                                      Subpuntaje: <strong>{pr.puntaje_criterio}</strong> / 10
-                                    </span>
-                                  </div>
-                                  <p className="analisis-criterio-proveedor__oferta muted" style={{ fontSize: 'var(--text-xs)' }}>
-                                    <strong>Ofertado:</strong> {pr.valor_ofertado ?? '—'}
-                                    {pr.confianza_extraccion && isConfianza(pr.confianza_extraccion) ? (
-                                      <>
-                                        {' '}
-                                        <span className={`badge-conf ${pr.confianza_extraccion}`}>
-                                          conf. extracción {pr.confianza_extraccion}
-                                        </span>
-                                      </>
-                                    ) : null}
-                                  </p>
-                                  <ul className="analisis-bullets">
-                                    {pr.bullets.map((b, bi) => (
-                                      <li key={bi}>{b}</li>
-                                    ))}
-                                  </ul>
-                                </li>
-                              ))}
-                            </ul>
-                          </article>
-                        ))}
-                      </div>
+                              <ul className="analisis-criterio-proveedores">
+                                {bl.proveedores.map((pr) => (
+                                  <li key={pr.proveedor} className="analisis-criterio-proveedor">
+                                    <div className="analisis-criterio-proveedor__head">
+                                      <span className="analisis-criterio-proveedor__name">{pr.proveedor}</span>
+                                      <span className="analisis-criterio-proveedor__score">
+                                        Subpuntaje: <strong>{pr.puntaje_criterio}</strong> / 10
+                                      </span>
+                                    </div>
+                                    <p
+                                      className="analisis-criterio-proveedor__oferta muted"
+                                      style={{ fontSize: 'var(--text-xs)' }}
+                                    >
+                                      <strong>Ofertado:</strong> {pr.valor_ofertado ?? '—'}
+                                      {pr.confianza_extraccion && isConfianza(pr.confianza_extraccion) ? (
+                                        <>
+                                          {' '}
+                                          <span className={`badge-conf ${pr.confianza_extraccion}`}>
+                                            conf. extracción {pr.confianza_extraccion}
+                                          </span>
+                                        </>
+                                      ) : null}
+                                    </p>
+                                    <ul className="analisis-bullets">
+                                      {pr.bullets.map((b, bi) => (
+                                        <li key={bi}>{b}</li>
+                                      ))}
+                                    </ul>
+                                  </li>
+                                ))}
+                              </ul>
+                            </article>
+                          ))}
+                        </div>
+                      </details>
                     </>
                   ) : (
                     <p className="muted" style={{ fontSize: 'var(--text-sm)' }}>
@@ -1782,6 +2045,71 @@ export default function App() {
                             ))}
                           </tbody>
                         </table>
+                      </>
+                    ) : null}
+
+                    {extendidoVista?.resumen_ejecutivo?.proveedores?.length && resumenLookup.proveedores.length > 0 ? (
+                      <>
+                        <h3>Cuadro comparable (puntaje + detalle)</h3>
+                        <p className="muted" style={{ fontSize: 'var(--text-xs)', marginBottom: '0.75rem' }}>
+                          Filas = criterio del TR. Columnas = proveedor. Cada celda muestra subpuntaje (0–10), ofertado y
+                          hallazgo del análisis.
+                        </p>
+                        <div className="cuadro-table-scroll">
+                          <table className="table table-doc-matrix table-eval-matrix">
+                            <thead>
+                              <tr>
+                                <th className="table-doc-matrix__req">Criterio (TR)</th>
+                                {resumenLookup.proveedores.map((prov) => (
+                                  <th key={prov} className="table-doc-matrix__prov">
+                                    {prov}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {resumenLookup.criterios.map((crit) => (
+                                <tr key={crit}>
+                                  <td className="table-doc-matrix__req">
+                                    <strong>{crit}</strong>
+                                    {(() => {
+                                      const any = resumenLookup.proveedores
+                                        .map((p) => resumenLookup.m.get(`${crit}\0${p}`))
+                                        .find(Boolean)
+                                      return any?.medicion_tr ? (
+                                        <p className="muted table-doc-matrix__desc">{any.medicion_tr}</p>
+                                      ) : null
+                                    })()}
+                                  </td>
+                                  {resumenLookup.proveedores.map((prov) => {
+                                    const c = resumenLookup.m.get(`${crit}\0${prov}`)
+                                    const conf = c?.confianza_extraccion ?? null
+                                    return (
+                                      <td key={prov} className="wrap table-doc-matrix__cell table-eval-cell">
+                                        {typeof c?.subpuntaje_10 === 'number' ? (
+                                          <div className="table-eval-score">
+                                            <strong>{c.subpuntaje_10}</strong> / 10
+                                          </div>
+                                        ) : (
+                                          <div className="table-eval-score muted">—</div>
+                                        )}
+                                        {c?.valor_ofertado ? (
+                                          <div className="table-eval-oferta">
+                                            <span className="muted">Ofertado:</span> {c.valor_ofertado}
+                                          </div>
+                                        ) : null}
+                                        {conf && typeof conf === 'string' && isConfianza(conf) ? (
+                                          <span className={`badge-conf ${conf}`}>conf. {conf}</span>
+                                        ) : null}
+                                        {c?.hallazgo ? <div className="table-eval-hallazgo">{c.hallazgo}</div> : null}
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </>
                     ) : null}
 
